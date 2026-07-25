@@ -1,0 +1,34 @@
+AETHERIUM PLAY AGREEMENT AND DISCLAIMER
+
+Please read this notice before continuing.
+
+Aetherium Play is an independent, community-created compatibility package. It
+is not affiliated with, sponsored by, approved by, or supported by Microsoft,
+Turbine, Warner Bros., Standing Stone Games, or the maintainers of the
+ACCPP community archive used to obtain the historical game files.
+
+The software and installation process are provided "as is" and without
+warranties of any kind. To the maximum extent permitted by applicable law,
+Vanquish, also known as Chosen One, and the Aetherium contributors accept no
+liability for data loss, system damage, service interruption, account issues,
+or other direct or indirect loss resulting from installation or use.
+
+The installer modifies an Asheron's Call: Dark Majesty installation, replaces
+client.exe only after an exact cryptographic hash match, and installs the
+Aetherium launcher plus required compatibility files (including third-party
+dgVoodoo 2 DirectDraw binaries by Dege — closed source; see the download
+sources page and dgVoodoo-NOTICE.md).
+
+You are responsible for:
+
+- keeping backups of files you care about;
+- deciding whether you have the right to obtain and use the historical game
+  files in your location;
+- reviewing the disclosed download sources on the following setup page; and
+- complying with any terms or laws that apply to you.
+
+Choosing "I accept the agreement" means that you understand the installation
+flow, accept this disclaimer, and authorize Aetherium Play Setup to download,
+verify, install, and update the files described above.
+
+Developed by Vanquish, aka Chosen One.

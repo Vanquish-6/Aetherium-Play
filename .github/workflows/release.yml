@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to build (e.g. v1.0.8). Leave empty to use version.txt."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+
+          if (-not $iscc) { throw "ISCC.exe not found after Inno Setup install." }
+          Write-Host "ISCC=$iscc"
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "${{ github.ref_name }}"
+          }
+          if ($tag -match '^v(?<ver>\d+\.\d+\.\d+)$') {
+            $version = $Matches['ver']
+          } else {
+            $version = (Get-Content version.txt -Raw).Trim()
+            $tag = "v$version"
+          }
+          Set-Content -Path version.txt -Value $version -NoNewline
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Building $tag ($version)"
+
+      - name: Build release installer
+        shell: pwsh
+        run: .\Build.ps1 -Configuration Release
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          $setup = "artifacts\installer\AetheriumPlaySetup.exe"
+          if (-not (Test-Path $setup)) { throw "Missing $setup" }
+
+          $notes = @"
+          Aetherium Play $version
+
+          Install or upgrade with AetheriumPlaySetup.exe.
+          Existing launchers check this release on startup (Help → Check for Updates).
+          "@
+
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag $setup --clobber
+          } else {
+            gh release create $tag $setup `
+              --title "Aetherium Play $version" `
+              --notes $notes
+          }

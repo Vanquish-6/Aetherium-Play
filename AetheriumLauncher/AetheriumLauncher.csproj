@@ -1,0 +1,41 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>AppIcon.ico</ApplicationIcon>
+    <PlatformTarget>x86</PlatformTarget>
+    <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <AssemblyName>AetheriumLauncher</AssemblyName>
+    <RootNamespace>AcLegacyLauncher</RootNamespace>
+    <Title>Aetherium Launcher</Title>
+    <AssemblyTitle>Aetherium Launcher</AssemblyTitle>
+    <Product>Aetherium Launcher</Product>
+    <Company>Vanquish (aka Chosen One)</Company>
+    <Authors>Vanquish (aka Chosen One)</Authors>
+    <Description>Aetherium launcher for the Dark Majesty client.</Description>
+    <Copyright>Developed by Vanquish, aka Chosen One</Copyright>
+    <Version>$(AetheriumVersion)</Version>
+    <AssemblyVersion>$(AetheriumVersion).0</AssemblyVersion>
+    <FileVersion>$(AetheriumVersion).0</FileVersion>
+    <InformationalVersion>$(AetheriumVersion)</InformationalVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThirdParty\MegaApiClient\MegaApiClient\MegaApiClient.csproj" />
+    <!-- Override MegaApiClient's old minimum transitive versions with patched releases. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+  </ItemGroup>
+
+</Project>

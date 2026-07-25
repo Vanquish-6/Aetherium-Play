@@ -1,0 +1,46 @@
+COMMUNITY DM CLIENT SOURCE AND VERIFICATION
+
+This setup does not contain or redistribute client.exe.
+
+During installation it downloads only the Dark Majesty v1.0.69 client.exe
+from this ACCPP community-hosted MEGA folder:
+
+https://mega.nz/folder/L1MniCKJ#1dQCCFPc2ddcFILa_JGeZw/folder/T00V3ISI
+
+The downloaded file must match BOTH:
+
+Size:    2,682,016 bytes
+SHA-256: 52DDFDD1BD3AF839A90898C9A2A3BA8983E1811A1F1E45A588B649C5615DD26B
+
+Files are first downloaded to a temporary name. The launcher supports either a
+raw executable in the public folder or the executable inside a ZIP archive.
+MEGA file names and folder layout are not trusted. Nothing can overwrite the
+installed client.exe unless the extracted bytes match the exact size and
+SHA-256 above. If the community upload is wrong, changed, or unavailable,
+setup stops and leaves the existing client.exe in place.
+
+If the public folder exposes the historical collection ZIP instead of the raw
+executable, setup may need to download about 200 MB before it can extract and
+verify the 2.6 MB client. The installer will say that it is still downloading.
+
+The source-visible downloader used by the launcher is based on the
+MIT-licensed MegaApiClient 1.10.5 source:
+
+Source: https://github.com/gpailler/MegaApiClient
+Package: https://www.nuget.org/packages/MegaApiClient/1.10.5
+
+MegaApiClient does not parse MEGA's nested "/folder/<id>" suffix correctly.
+The published launcher therefore opens the same share using its root URL and
+then restricts the returned node tree to public folder ID T00V3ISI. The source
+shown above remains the user-facing location.
+
+Some files in this historical collection advertise keys from multiple
+overlapping shares. The upstream library always uses the first key, but that
+entry is obsolete for this client.exe and produces an invalid checksum.
+Launcher setup 1.0.5 includes a narrow, source-visible fix which tries each
+advertised node key and accepts one only when it decrypts valid MEGA node
+attributes. The exact executable size and SHA-256 checks above remain the final
+acceptance gate.
+
+Only client.exe is handled by this step. portal.dat and cell.dat are updated
+separately by DDD from the game server selected in the launcher.

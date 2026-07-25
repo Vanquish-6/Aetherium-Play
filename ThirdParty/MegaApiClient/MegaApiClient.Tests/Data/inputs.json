@@ -1,0 +1,121 @@
+﻿{
+  "UsernameAccount": "megaapiclient4@yopmail.com",
+  "TotalQuota": 21474836480,
+
+  "_comment_MasterKeyHash": "Hash of the master key (check GetRecoveryKeyAfterLogin_Succeeds to generate the hash from the masterkey)",
+  "MasterKeyHash": "p4KqEao9gqcagOS87203DiDLosoak7Y41QztZ_3QewQ",
+
+  "_comment_StorageLayout": [
+    "+-Root",
+    "|   +-SharedFolder                          (Outgoing Share)",
+    "|       |-SharedFile.jpg",
+    "|       +-SharedSubFolder                   (Outgoing Share)",
+    "|           |-SharedFileUpSideDown.jpg",
+    "+-SampleZipFile.zip",
+    "+-Trash",
+    "+-Inbox",
+    "+-Contacts",
+    "  +-SharedRemoteFolder                     (Incoming Share)",
+    "    |-SharedRemoteFile.jpg",
+    "    +-SharedRemoteSubFolder                (Incoming Share / Subfolder of SharedRemoteFolder)",
+    "      |-SharedRemoteSubFile.jpg",
+    "      +-SharedRemoteSubSubFolder"
+  ],
+
+  "FileLink": "https://mega.nz/file/3MolSBjA#Jdd26GHPF2sfj40IakU46UMNJAvInEPX4QlWT2oWYNQ",
+  "ZipFileLink": "https://mega.nz/file/eIRnyIiQ#iFqZubk4ETI8H2rPhwMRjQaQ3puHlsSvc-bWby9E87o",
+  "FolderLink": "https://mega.nz/folder/PIZlnRaY#KIOsd4bKgGQmB3gOH2VeGA",
+
+  "Root": {
+    "Id": "CVwBQBzB",
+    "CreationDate": "2023-03-05T21:29:51.0000000+08:00"
+  },
+
+  "Trash": {
+    "Id": "GUpXWJiQ",
+    "CreationDate": "2023-03-05T21:29:51.0000000+08:00"
+  },
+
+  "Inbox": {
+    "Id": "KQhTTBgD",
+    "CreationDate": "2023-03-05T21:29:51.0000000+08:00"
+  },
+
+  "SharedFolder": {
+    "Id": "eBoFxIwa",
+    "CreationDate": "2023-03-05T21:37:34.0000000+08:00"
+  },
+
+  "SharedFile": {
+    "Id": "2QgnCCpB",
+    "Size": 523265,
+    "CreationDate": "2023-03-05T21:37:48.0000000+08:00",
+    "ModificationDate": "2020-05-03T15:47:44.0000000+08:00",
+    "Fingerprint": "GRSM8-c1HUmlmyDuTJVrDwQgd65e",
+    "Metadata": [
+      {
+        "_comment": "Preview",
+        "Id": "FI4k-VG4Dx4",
+        "AttributeId": 701
+      },
+      {
+        "_comment": "Thumbnail",
+        "Id": "9uSiHwYMH_M",
+        "AttributeId": 825
+      }
+    ]
+  },
+
+  "SharedSubFolder": {
+    "Id": "jB5HTS5b",
+    "CreationDate": "2023-03-05T21:38:29.0000000+08:00"
+  },
+
+  "SharedFileUpSideDown": {
+    "Id": "DJpjyICA",
+    "Size": 112916,
+    "CreationDate": "2023-03-05T21:38:46.0000000+08:00",
+    "ModificationDate": "2023-03-05T15:02:15.0000000+08:00",
+    "Fingerprint": "hDL3WKxHmI6lMM92r43BWQR3PgRk"
+  },
+
+  "SampleZipFile": {
+    "Id": "GQpXUSZS",
+    "Size": 513604,
+    "CreationDate": "2021-11-22T08:12:43.0000000+08:00",
+    "ModificationDate": "2023-03-05T15:02:15.0000000+08:00",
+    "Fingerprint": "sKBj43s_QyradRQ1YlmxhAR3PgRk"
+  },
+
+  "SharedRemoteFolder": {
+    "ParentId": "HB4RgZwb",
+    "Id": "aUp32IjL",
+    "CreationDate": "2023-03-05T21:34:06.0000000+08:00"
+  },
+
+  "SharedRemoteSubFolder": {
+    "Id": "HY5nFabZ",
+    "CreationDate": "2023-03-05T21:35:24.0000000+08:00"
+  },
+
+  "SharedRemoteSubSubFolder": {
+    "Id": "CFpFnYhZ",
+    "CreationDate": "2023-03-05T21:35:48.0000000+08:00"
+  },
+
+  "SharedRemoteFile": {
+    "Id": "fQohECZJ",
+    "Size": 523265,
+    "CreationDate": "2023-03-05T21:35:20.0000000+08:00",
+    "ModificationDate": "2020-05-03T15:47:44.0000000+08:00",
+    "Fingerprint": "GRSM8-c1HUmlmyDuTJVrDwQgd65e"
+  },
+
+  "SharedRemoteSubFile": {
+    "Id": "XUxxRQaA",
+    "Size": 523265,
+    "CreationDate": "2023-03-05T21:35:39.0000000+08:00",
+    "ModificationDate": "2020-05-03T15:47:44.0000000+08:00",
+    "Fingerprint": "GRSM8-c1HUmlmyDuTJVrDwQgd65e"
+  }
+}

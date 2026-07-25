@@ -1,0 +1,23 @@
+# .NET build outputs
+**/bin/
+**/obj/
+
+# Project-local release artifacts
+artifacts/
+
+# IDE and user-specific state
+.vs/
+*.user
+*.suo
+
+# Installer compiler intermediates
+Installer/Output/
+
+# Local logs and temporary bootstrap files
+*.log
+*.tmp
+*.download
+
+# Design mockups (not shipped)
+**/preview-*.png
+**/*.pre-rebuild-backup.*

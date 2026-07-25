@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Single source of truth: version.txt at repo root. -->
+    <AetheriumVersion Condition="'$(AetheriumVersion)' == ''">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)version.txt').Trim())</AetheriumVersion>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,71 @@
+AETHERIUM PLAY DOWNLOAD SOURCES AND VERIFICATION
+
+This setup is intentionally small. It does not embed the historical Dark
+Majesty game installer or client.exe. Those files come from the disclosed
+ACCPP community-hosted MEGA collection and are accepted only after
+exact size and SHA-256 verification.
+
+The historical installer and client.exe are hosted by the ACCPP community.
+
+1. ORIGINAL DARK MAJESTY INSTALLER ARCHIVE
+
+ACCPP community source:
+https://mega.nz/folder/L1MniCKJ#1dQCCFPc2ddcFILa_JGeZw/folder/mlk0DQqR
+
+Archive: 2004-09-01 (278717kb).7z
+Size:    242,270,845 bytes
+SHA-256: 50A6B74A706989B1E8B06936419BB87D05A1E4D9D1D6417C10CA1FA0F60E89EF
+
+The archive must contain:
+
+File:    ac1install.exe
+Size:    285,405,384 bytes
+SHA-256: 046EA8FFFA7CFD5828355F72FEBADDB52B536510202DD73D79A19BFA340B92BC
+
+The historical installer is unpacked to a temporary directory. A one-byte
+logic patch disables only its obsolete Internet Explorer version check. The
+original InstallShield wizard then lets you choose the game installation
+location.
+
+2. DARK MAJESTY CLIENT.EXE
+
+ACCPP community source:
+https://mega.nz/folder/L1MniCKJ#1dQCCFPc2ddcFILa_JGeZw/folder/T00V3ISI
+
+File:    client.exe, Dark Majesty v1.0.69.0
+Size:    2,682,016 bytes
+SHA-256: 52DDFDD1BD3AF839A90898C9A2A3BA8983E1811A1F1E45A588B649C5615DD26B
+
+The original installed client.exe is replaced only after the downloaded file
+matches both the exact size and SHA-256 above.
+
+3. AETHERIUM CONNECTION
+
+Host: play.aetherium.ac
+Port: 9000
+
+4. DOWNLOADER
+
+MEGA download support uses the source-visible, MIT-licensed MegaApiClient
+1.10.5 code:
+
+https://github.com/gpailler/MegaApiClient
+
+MEGA display names and folder layout are not trusted. Exact byte size and
+SHA-256 are the final acceptance gates.
+
+5. DGVOODOO 2 (GRAPHICS WRAPPER)
+
+Legacy Dark Majesty needs a DirectDraw wrapper on modern Windows. Aetherium
+Play includes individual dgVoodoo 2 binary components by Dege (not Aetherium
+source code):
+
+  DDraw.dll
+  D3DImm.dll
+  dgVoodoo.conf  (dgVoodoo 2.87.x)
+
+Upstream: https://dege.freeweb.hu/dgVoodoo2/
+
+dgVoodoo remains the property of its author. Aetherium ships only the files
+needed for this game install. Full attribution and redistribution notes ship
+with the product documentation (dgVoodoo-NOTICE.md).
