@@ -30,7 +30,7 @@ compatibility files.
 
 ```
 AetheriumPlay/
-├── AetheriumLauncher/     # .NET 8 WinForms launcher (x86)
+├── AetheriumLauncher/     # Self-contained .NET 8 WinForms launcher (x86)
 ├── Installer/             # Inno Setup scripts + player-facing notices
 ├── ThirdParty/            # Vendored MegaApiClient source (MIT)
 ├── tools/dgvoodoo/        # Bundled dgVoodoo binaries (no source; see NOTICE)
@@ -44,6 +44,9 @@ AetheriumPlay/
 installer and `client.exe`, runs the original InstallShield wizard, closes the
 obsolete Turbine launcher, installs Aetherium Launcher, and presets
 `play.aetherium.ac:9000`.
+
+The player does not need to install .NET separately. Release builds carry the
+x86 .NET Desktop runtime required by the launcher.
 
 Launcher features:
 
@@ -133,4 +136,3 @@ without auth.
 Optional: `Installer\AetheriumLauncher.iss` installs the launcher into an
 **existing** Dark Majesty folder (no full game bootstrap). The player-facing
 path is `AetheriumPlay.iss` only.
-

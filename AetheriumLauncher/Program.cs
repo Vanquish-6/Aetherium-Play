@@ -67,6 +67,21 @@ static class Program
         if (args.Length == 2 &&
             string.Equals(
                 args[0],
+                "--prepare-community-game-installer",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return RunProgressOperation(
+                "Preparing the original Dark Majesty installer",
+                (progress, cancellationToken) =>
+                    CommunityGameInstallerBootstrap.PrepareInstallerAsync(
+                        args[1],
+                        progress,
+                        cancellationToken));
+        }
+
+        if (args.Length == 2 &&
+            string.Equals(
+                args[0],
                 "--verify-community-game-archive",
                 StringComparison.OrdinalIgnoreCase))
         {
@@ -131,8 +146,12 @@ static class Program
         ApplicationConfiguration.Initialize();
         using var form = new DownloadProgressForm(operationName, operation);
         Application.Run(form);
+        var failureDetail = form.Failure is null
+            ? string.Empty
+            : $"{Environment.NewLine}{form.Failure}";
         WriteAetheriumPlayLog(
-            $"{(form.ExitCode == 0 ? "SUCCESS" : "FAILURE")}: {operationName}; exit {form.ExitCode}");
+            $"{(form.ExitCode == 0 ? "SUCCESS" : "FAILURE")}: {operationName}; " +
+            $"exit {form.ExitCode}{failureDetail}");
         return form.ExitCode;
     }
 
@@ -222,7 +241,11 @@ static class Program
         Path.Combine(Path.GetTempPath(), "AetheriumLauncher-community-client.log");
 
     private static string AetheriumPlayLogPath =>
-        Path.Combine(Path.GetTempPath(), "AetheriumPlay-setup.log");
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "AetheriumPlay",
+            "Logs",
+            "setup.log");
 
     private static void WriteCommunityClientLog(string text)
     {
@@ -242,6 +265,7 @@ static class Program
     {
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(AetheriumPlayLogPath)!);
             File.AppendAllText(
                 AetheriumPlayLogPath,
                 $"[{DateTimeOffset.UtcNow:O}] {text}{Environment.NewLine}");

@@ -3,7 +3,7 @@
 
 #define MyAppName "Aetherium Play"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.0.8"
 #endif
 #define MyAppPublisher "Vanquish (aka Chosen One)"
 #define MyAppExeName "AetheriumLauncher.exe"
@@ -47,11 +47,7 @@ Name: "skin\default"; Description: "&Default"; GroupDescription: "Launcher skin:
 Name: "skin\pk"; Description: "&PK"; GroupDescription: "Launcher skin:"; Flags: exclusive unchecked
 
 [Files]
-Source: "{#PublishDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\AetheriumLauncher.deps.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\AetheriumLauncher.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\Assets\*"; DestDir: "{app}\Assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "AetheriumPlayAgreement.txt"; DestDir: "{app}\Documentation"; Flags: ignoreversion
 Source: "AetheriumPlaySources.txt"; DestDir: "{app}\Documentation"; Flags: ignoreversion
 Source: "Patch-SetupInxIeCheck.ps1"; DestDir: "{app}\Bootstrap"; Flags: ignoreversion
@@ -76,12 +72,8 @@ Name: "{autoprograms}\Aetherium Play"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\Aetherium Play"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{tmp}\windowsdesktop-runtime-win-x86.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing the .NET 8 Desktop Runtime..."; Check: NeedsDotNetDesktopRuntime; Flags: waituntilterminated
-
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--download-community-game-archive ""{tmp}\AetheriumPlay\dm-source.7z"""; StatusMsg: "Downloading the original Dark Majesty installer from the disclosed ACCPP source..."; Check: IsLegacyGameInstallRequired; BeforeInstall: PrepareBootstrapDirectories; AfterInstall: VerifyDownloadedArchive; Flags: waituntilterminated
-Filename: "{sys}\tar.exe"; Parameters: "-xf ""{tmp}\AetheriumPlay\dm-source.7z"" -C ""{tmp}\AetheriumPlay\source"""; StatusMsg: "Unpacking the verified ACCPP archive..."; Check: IsLegacyGameInstallRequired; AfterInstall: VerifyExtractedGameInstaller; Flags: runhidden waituntilterminated
-Filename: "{tmp}\AetheriumPlay\source\ac1install.exe"; Parameters: "/extract_all:""{tmp}\AetheriumPlay\legacy"""; StatusMsg: "Extracting the original Dark Majesty installer..."; Check: IsLegacyGameInstallRequired; AfterInstall: PatchLegacyInstallerPayload; Flags: waituntilterminated
-Filename: "{tmp}\AetheriumPlay\legacy\Disk1\setup.exe"; WorkingDir: "{tmp}\AetheriumPlay\legacy\Disk1"; StatusMsg: "Complete the original Dark Majesty installation wizard..."; Check: IsLegacyGameInstallRequired; AfterInstall: RequireGameInstall; Flags: waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--prepare-community-game-installer ""{commonappdata}\AetheriumPlay\Bootstrap"""; StatusMsg: "Downloading, verifying, and preparing the original Dark Majesty installer..."; Check: IsLegacyGameInstallRequired; AfterInstall: PatchLegacyInstallerPayload; Flags: waituntilterminated
+Filename: "{commonappdata}\AetheriumPlay\Bootstrap\legacy\Disk1\setup.exe"; WorkingDir: "{commonappdata}\AetheriumPlay\Bootstrap\legacy\Disk1"; StatusMsg: "Complete the original Dark Majesty installation wizard..."; Check: IsLegacyGameInstallRequired; AfterInstall: RequireGameInstall; Flags: waituntilterminated
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM aclauncher.exe"; StatusMsg: "Closing the obsolete original launcher..."; Check: IsLegacyGameInstallRequired; Flags: runhidden waituntilterminated
 
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-community-client-from-file ""{param:COMMUNITYCLIENTFILE|}"" ""{code:GetGameInstallDir}"""; StatusMsg: "Installing and verifying the Dark Majesty client..."; Check: HasCommunityClientFile; AfterInstall: VerifyCommunityClient; Flags: waituntilterminated
@@ -90,16 +82,7 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-aetherium-install ""
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Aetherium Play"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function URLDownloadToFile(
-  pCaller: Integer;
-  szURL, szFileName: string;
-  Reserved: Integer;
-  lpfnCB: Integer): Integer;
-  external 'URLDownloadToFileA@urlmon.dll stdcall';
-
 var
-  DotNetDownloadAttempted: Boolean;
-  DotNetDownloadOk: Boolean;
   LegacyGameInstallRequired: Boolean;
   ResolvedGameInstallDir: string;
 
@@ -118,7 +101,8 @@ begin
     ResultCode)) or (ResultCode <> 0) then
   begin
     RaiseException(FailureMessage + #13#10 + #13#10 +
-      'See: ' + ExpandConstant('{tmp}\AetheriumPlay-setup.log'));
+      'See: ' +
+      ExpandConstant('{commonappdata}\AetheriumPlay\Logs\setup.log'));
   end;
 end;
 
@@ -305,6 +289,10 @@ begin
 
   if FindClientExeSubfolder('C:\Turbine Entertainment Software', FoundDir) or
      FindClientExeSubfolder('C:\Turbine', FoundDir) or
+     FindClientExeSubfolder(
+       ExpandConstant('{pf32}\Turbine Entertainment Software'), FoundDir) or
+     FindClientExeSubfolder(ExpandConstant('{pf32}\Turbine'), FoundDir) or
+     FindClientExeSubfolder(ExpandConstant('{pf32}\Microsoft Games'), FoundDir) or
      TryGetInstallDirFromUninstallRegistry(FoundDir) or
      SearchShortcutsRecursive(ExpandConstant('{commonprograms}'), FoundDir) or
      SearchShortcutsRecursive(ExpandConstant('{userprograms}'), FoundDir) or
@@ -328,39 +316,12 @@ begin
   Result := LegacyGameInstallRequired;
 end;
 
-procedure PrepareBootstrapDirectories();
-begin
-  ForceDirectories(ExpandConstant('{tmp}\AetheriumPlay\source'));
-  ForceDirectories(ExpandConstant('{tmp}\AetheriumPlay\legacy'));
-end;
-
-procedure VerifyDownloadedArchive();
-begin
-  RunRequired(
-    ExpandConstant('{app}\{#MyAppExeName}'),
-    '--verify-community-game-archive "' +
-      ExpandConstant('{tmp}\AetheriumPlay\dm-source.7z') + '"',
-    ExpandConstant('{app}'),
-    'The downloaded Dark Majesty archive failed verification.',
-    SW_HIDE);
-end;
-
-procedure VerifyExtractedGameInstaller();
-begin
-  RunRequired(
-    ExpandConstant('{app}\{#MyAppExeName}'),
-    '--verify-community-game-installer "' +
-      ExpandConstant('{tmp}\AetheriumPlay\source\ac1install.exe') + '"',
-    ExpandConstant('{app}'),
-    'The extracted ac1install.exe failed verification.',
-    SW_HIDE);
-end;
-
 procedure PatchLegacyInstallerPayload();
 var
   SetupInxPath: string;
 begin
-  SetupInxPath := ExpandConstant('{tmp}\AetheriumPlay\legacy\Disk1\setup.inx');
+  SetupInxPath := ExpandConstant(
+    '{commonappdata}\AetheriumPlay\Bootstrap\legacy\Disk1\setup.inx');
   if not FileExists(SetupInxPath) then
     RaiseException('The original installer did not extract its Disk1 payload.');
 
@@ -375,11 +336,26 @@ begin
 end;
 
 procedure RequireGameInstall();
+var
+  SelectedDirectory: string;
 begin
-  if not TryResolveGameInstallDir(ResolvedGameInstallDir) then
-    RaiseException(
-      'The Dark Majesty installer closed, but Aetherium Play could not find a ' +
-      'complete installation containing client.exe, portal.dat, and cell.dat.');
+  if TryResolveGameInstallDir(ResolvedGameInstallDir) then
+    Exit;
+
+  SelectedDirectory := ExpandConstant('{pf32}\Turbine\Asheron''s Call');
+  if BrowseForFolder(
+       'Select the Dark Majesty folder you just installed. It contains client.exe.',
+       SelectedDirectory,
+       False) and IsCompleteGameDirectory(SelectedDirectory) then
+  begin
+    ResolvedGameInstallDir := SelectedDirectory;
+    Exit;
+  end;
+
+  RaiseException(
+    'Aetherium Play could not find a complete Dark Majesty installation. ' +
+    'Run setup again and select the folder containing client.exe, portal.dat, ' +
+    'and cell.dat when prompted.');
 end;
 
 function GetGameInstallDir(Param: string): string;
@@ -409,55 +385,20 @@ begin
     ResultCode)) or (ResultCode <> 0) then
   begin
     RaiseException(
-      'The Dark Majesty client was not installed because client.exe did not ' +
-      'match the disclosed SHA-256.');
+      'The Dark Majesty client download or verification did not complete. ' +
+      'The existing client.exe was left unchanged.' + #13#10 + #13#10 +
+      'See: ' +
+      ExpandConstant('{commonappdata}\AetheriumPlay\Logs\setup.log'));
   end;
 end;
 
 procedure VerifyLauncherConfiguration();
 begin
   if not FileExists(ExpandConstant('{app}\game.install.path')) then
-    RaiseException('Aetherium Launcher could not save the selected game location.');
+    RaiseException(
+      'Aetherium Launcher could not save the selected game location.' +
+      '' + #13#10 + #13#10 + 'See: ' +
+      ExpandConstant('{commonappdata}\AetheriumPlay\Logs\setup.log'));
   if not FileExists(AddBackslash(GetGameInstallDir('')) + 'launcher.json') then
     RaiseException('Aetherium Launcher could not save its play.aetherium.ac configuration.');
-end;
-
-function IsDotNetDesktopRuntimeInstalled: Boolean;
-var
-  FindRec: TFindRec;
-  BaseDir: string;
-begin
-  Result := False;
-  BaseDir := ExpandConstant('{pf32}\dotnet\shared\Microsoft.WindowsDesktop.App');
-  if DirExists(BaseDir) and FindFirst(BaseDir + '\8.*', FindRec) then
-  begin
-    Result := True;
-    FindClose(FindRec);
-  end;
-end;
-
-function NeedsDotNetDesktopRuntime: Boolean;
-begin
-  if IsDotNetDesktopRuntimeInstalled then
-  begin
-    Result := False;
-    Exit;
-  end;
-
-  if not DotNetDownloadAttempted then
-  begin
-    DotNetDownloadAttempted := True;
-    DotNetDownloadOk := URLDownloadToFile(
-      0,
-      'https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x86.exe',
-      ExpandConstant('{tmp}\windowsdesktop-runtime-win-x86.exe'),
-      0,
-      0) = 0;
-    if not DotNetDownloadOk then
-      RaiseException(
-        'The .NET 8 Desktop Runtime could not be downloaded. Install the x86 ' +
-        'Windows Desktop Runtime and run Aetherium Play Setup again.');
-  end;
-
-  Result := DotNetDownloadOk;
 end;

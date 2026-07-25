@@ -35,7 +35,7 @@ Write-Host "Publishing Aetherium Launcher..."
 dotnet publish $launcherProject `
     -c $Configuration `
     -r win-x86 `
-    --self-contained false `
+    --self-contained true `
     -p:AetheriumVersion=$version
 if ($LASTEXITCODE -ne 0) {
     throw "Aetherium Launcher publish failed with exit code $LASTEXITCODE."

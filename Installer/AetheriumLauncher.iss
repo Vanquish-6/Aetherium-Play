@@ -1,20 +1,19 @@
 ; Aetherium Launcher installer
 ; Developed by Vanquish, aka Chosen One
 ;
-; Drops the launcher (exe + Assets) into the player's existing Asheron's Call
-; install folder (the one containing client.exe), makes sure the .NET 8
-; Desktop Runtime is present (downloading it silently if it's missing), and
-; creates Start Menu / optional Desktop shortcuts.
+; Drops the self-contained launcher (exe + Assets + x86 .NET runtime) into the
+; player's existing Asheron's Call install folder (the one containing
+; client.exe), and creates Start Menu / optional Desktop shortcuts.
 ;
 ; Build with:
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" AetheriumLauncher.iss
 ;
-; Requires the launcher to already be published framework-dependent first:
-;   dotnet publish ..\AetheriumLauncher\AetheriumLauncher.csproj -c Release -r win-x86 --self-contained false
+; Requires the launcher to already be published self-contained first:
+;   dotnet publish ..\AetheriumLauncher\AetheriumLauncher.csproj -c Release -r win-x86 --self-contained true
 
 #define MyAppName "Aetherium Launcher"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.0.8"
 #endif
 #define MyAppPublisher "Vanquish (aka Chosen One)"
 #define MyAppExeName "AetheriumLauncher.exe"
@@ -60,11 +59,7 @@ Name: "skin\pk"; Description: "&PK"; GroupDescription: "Launcher skin:"; Flags: 
 [Files]
 ; client.exe is deliberately not bundled. The verified community download in
 ; [Run] replaces it only after an exact SHA-256 match.
-Source: "{#PublishDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\AetheriumLauncher.deps.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\AetheriumLauncher.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#PublishDir}\Assets\*"; DestDir: "{app}\Assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "CommunityClientSource.txt"; DestDir: "{app}"; DestName: "COMMUNITY_CLIENT_SOURCE.txt"; Flags: ignoreversion
 Source: "..\ThirdParty\MegaApiClient\LICENSE"; DestDir: "{app}"; DestName: "MegaApiClient-LICENSE.txt"; Flags: ignoreversion
 Source: "..\tools\dgvoodoo\NOTICE.md"; DestDir: "{app}"; DestName: "dgVoodoo-NOTICE.md"; Flags: ignoreversion
@@ -108,19 +103,11 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{tmp}\windowsdesktop-runtime-win-x86.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing .NET 8 Desktop Runtime (first-time only, this can take a minute)..."; Check: NeedsDotNetDesktopRuntime; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-community-client-from-file ""{param:COMMUNITYCLIENTFILE|}"" ""{app}"""; StatusMsg: "Installing and verifying the community DM client..."; Check: HasCommunityClientFile; AfterInstall: VerifyCommunityClient; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-community-client ""{app}"""; StatusMsg: "Downloading and verifying the community DM client (the MEGA ZIP may be about 200 MB; please wait)..."; Check: not HasCommunityClientFile; AfterInstall: VerifyCommunityClient; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function URLDownloadToFile(pCaller: Integer; szURL, szFileName: string; Reserved: Integer; lpfnCB: Integer): Integer;
-  external 'URLDownloadToFileA@urlmon.dll stdcall';
-
-var
-  DotNetDownloadAttempted: Boolean;
-  DotNetDownloadOk: Boolean;
-
 function HasCommunityClientFile: Boolean;
 begin
   Result := ExpandConstant('{param:COMMUNITYCLIENTFILE|}') <> '';
@@ -393,46 +380,4 @@ begin
       'Browse and pick that folder (or its parent folder) and try again.', mbError, MB_OK);
     Result := False;
   end;
-end;
-
-// Looks for any installed Microsoft.WindowsDesktop.App 8.x shared runtime.
-function IsDotNetDesktopRuntimeInstalled: Boolean;
-var
-  FindRec: TFindRec;
-  BaseDir: string;
-begin
-  Result := False;
-  BaseDir := ExpandConstant('{pf32}\dotnet\shared\Microsoft.WindowsDesktop.App');
-  if DirExists(BaseDir) and FindFirst(BaseDir + '\8.*', FindRec) then
-  begin
-    Result := True;
-    FindClose(FindRec);
-  end;
-end;
-
-// [Run] Check callback: returns True (and downloads the runtime installer to
-// {tmp} on first call) only if the runtime is actually missing.
-function NeedsDotNetDesktopRuntime: Boolean;
-begin
-  if IsDotNetDesktopRuntimeInstalled then
-  begin
-    Result := False;
-    Exit;
-  end;
-
-  if not DotNetDownloadAttempted then
-  begin
-    DotNetDownloadAttempted := True;
-    DotNetDownloadOk := URLDownloadToFile(0,
-      'https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x86.exe',
-      ExpandConstant('{tmp}\windowsdesktop-runtime-win-x86.exe'), 0, 0) = 0;
-    if not DotNetDownloadOk then
-      MsgBox(
-        'Could not download the .NET 8 Desktop Runtime automatically ' +
-        '(no internet connection?). Aetherium Launcher needs it to run.' + #13#10 + #13#10 +
-        'Please install it manually afterwards from:' + #13#10 +
-        'https://dotnet.microsoft.com/download/dotnet/8.0', mbError, MB_OK);
-  end;
-
-  Result := DotNetDownloadOk;
 end;

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 using CG.Web.MegaApiClient;
 
 namespace AcLegacyLauncher;
@@ -55,9 +56,22 @@ internal static class CommunityGameInstallerBootstrap
 
         if (File.Exists(fullDestinationPath))
         {
-            await VerifyArchiveAsync(fullDestinationPath, cancellationToken);
-            progress?.Report(100);
-            return;
+            try
+            {
+                await VerifyArchiveAsync(fullDestinationPath, cancellationToken);
+                progress?.Report(100);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            {
+                TryDelete(fullDestinationPath);
+                if (File.Exists(fullDestinationPath))
+                {
+                    throw new IOException(
+                        "The cached Dark Majesty archive is invalid and could not be replaced.",
+                        ex);
+                }
+            }
         }
 
         var temporaryPath = fullDestinationPath + $".{Guid.NewGuid():N}.download";
@@ -80,6 +94,34 @@ internal static class CommunityGameInstallerBootstrap
             TryDelete(temporaryPath);
             await TryLogoutAsync(mega);
         }
+    }
+
+    public static async Task PrepareInstallerAsync(
+        string workDirectory,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(workDirectory))
+        {
+            throw new ArgumentException("A bootstrap work directory is required.");
+        }
+
+        var root = Path.GetFullPath(workDirectory);
+        var archivePath = Path.Combine(root, "dm-source.7z");
+        var sourceDirectory = Path.Combine(root, "source");
+        var legacyDirectory = Path.Combine(root, "legacy");
+
+        Directory.CreateDirectory(root);
+        await DownloadArchiveAsync(archivePath, progress, cancellationToken);
+        await ExtractAndVerifyArchiveAsync(
+            archivePath,
+            sourceDirectory,
+            cancellationToken);
+        await ExtractAndVerifyLegacyPayloadAsync(
+            Path.Combine(sourceDirectory, "ac1install.exe"),
+            legacyDirectory,
+            cancellationToken);
+        progress?.Report(100);
     }
 
     public static Task VerifyArchiveAsync(
@@ -204,6 +246,164 @@ internal static class CommunityGameInstallerBootstrap
         }
     }
 
+    private static async Task ExtractAndVerifyArchiveAsync(
+        string archivePath,
+        string sourceDirectory,
+        CancellationToken cancellationToken)
+    {
+        var tarPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "tar.exe");
+        if (!File.Exists(tarPath))
+        {
+            throw new FileNotFoundException(
+                "Windows tar.exe is required to unpack the verified ACCPP archive.",
+                tarPath);
+        }
+
+        Exception? lastFailure = null;
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ResetDirectory(sourceDirectory);
+
+            try
+            {
+                var result = await RunProcessAsync(
+                    tarPath,
+                    ["-xf", archivePath, "-C", sourceDirectory],
+                    sourceDirectory,
+                    cancellationToken);
+                if (result.ExitCode != 0)
+                {
+                    throw new InvalidDataException(
+                        $"Windows archive extraction failed with exit code " +
+                        $"{result.ExitCode}: {result.Error}");
+                }
+
+                await VerifyInstallerAsync(
+                    Path.Combine(sourceDirectory, "ac1install.exe"),
+                    cancellationToken);
+                return;
+            }
+            catch (Exception ex) when (
+                ex is IOException or InvalidDataException)
+            {
+                lastFailure = ex;
+            }
+        }
+
+        throw new InvalidDataException(
+            "The verified ACCPP archive could not be extracted intact after two attempts.",
+            lastFailure);
+    }
+
+    private static async Task ExtractAndVerifyLegacyPayloadAsync(
+        string installerPath,
+        string legacyDirectory,
+        CancellationToken cancellationToken)
+    {
+        await VerifyInstallerAsync(installerPath, cancellationToken);
+
+        Exception? lastFailure = null;
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ResetDirectory(legacyDirectory);
+
+            try
+            {
+                var result = await RunProcessAsync(
+                    installerPath,
+                    [$"/extract_all:{legacyDirectory}"],
+                    Path.GetDirectoryName(installerPath)!,
+                    cancellationToken);
+                if (result.ExitCode != 0)
+                {
+                    throw new InvalidDataException(
+                        $"The original installer extractor returned exit code " +
+                        $"{result.ExitCode}: {result.Error}");
+                }
+
+                ValidateLegacyPayload(legacyDirectory);
+                return;
+            }
+            catch (Exception ex) when (
+                ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception)
+            {
+                lastFailure = ex;
+            }
+        }
+
+        throw new InvalidDataException(
+            "The original installer could not produce an intact Disk1 payload after two attempts.",
+            lastFailure);
+    }
+
+    private static void ValidateLegacyPayload(string legacyDirectory)
+    {
+        var disk1 = Path.Combine(legacyDirectory, "Disk1");
+        var requiredFiles = new[]
+        {
+            "setup.exe",
+            "setup.ini",
+            "setup.inx",
+            "data1.cab",
+            "data1.hdr",
+            "data2.cab",
+        };
+        var missing = requiredFiles
+            .Where(name => !File.Exists(Path.Combine(disk1, name)))
+            .ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidDataException(
+                $"The original installer Disk1 payload is incomplete. Missing: " +
+                string.Join(", ", missing));
+        }
+    }
+
+    private static async Task<ProcessResult> RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Could not start {fileName}.");
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        return new ProcessResult(
+            process.ExitCode,
+            await outputTask,
+            await errorTask);
+    }
+
+    private static void ResetDirectory(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive: true);
+        }
+
+        Directory.CreateDirectory(path);
+    }
+
     private static async Task TryLogoutAsync(MegaApiClient mega)
     {
         if (!mega.IsLoggedIn)
@@ -240,4 +440,6 @@ internal static class CommunityGameInstallerBootstrap
             // Best-effort cleanup must not hide the real download error.
         }
     }
+
+    private sealed record ProcessResult(int ExitCode, string Output, string Error);
 }

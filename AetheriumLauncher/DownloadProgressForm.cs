@@ -11,6 +11,7 @@ internal sealed class DownloadProgressForm : Form
     private bool allowClose;
 
     public int ExitCode { get; private set; } = 1;
+    public Exception? Failure { get; private set; }
 
     public DownloadProgressForm(
         string operationName,
@@ -91,6 +92,7 @@ internal sealed class DownloadProgressForm : Form
         }
         catch (Exception ex)
         {
+            Failure = ex;
             MessageBox.Show(
                 this,
                 ex.Message,

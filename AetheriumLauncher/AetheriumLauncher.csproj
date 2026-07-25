@@ -10,6 +10,8 @@
     <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <PlatformTarget>x86</PlatformTarget>
     <RuntimeIdentifier>win-x86</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <AssemblyName>AetheriumLauncher</AssemblyName>
     <RootNamespace>AcLegacyLauncher</RootNamespace>
     <Title>Aetherium Launcher</Title>
