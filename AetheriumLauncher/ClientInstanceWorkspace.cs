@@ -108,7 +108,7 @@ public static class ClientInstanceWorkspace
         report?.Invoke($"Preparing multiclient folder: {workingDirectory}");
 
         LinkRuntimeFiles(installDirectory, workingDirectory, report);
-        var copiedDats = EnsureExclusiveDats(installDirectory, workingDirectory, report);
+        var copiedDats = SyncAuthoritativeDats(installDirectory, report, workingDirectory);
 
         var clientExe = Path.Combine(workingDirectory, "client.exe");
         if (!File.Exists(clientExe))
@@ -119,8 +119,8 @@ public static class ClientInstanceWorkspace
         }
 
         var detail = copiedDats
-            ? $"Private portal.dat/cell.dat ready under multiclient\\{safeId} (one-time copy)."
-            : $"Using existing multiclient\\{safeId} workspace.";
+            ? $"Private portal.dat/cell.dat synced under multiclient\\{safeId} from the newest install copy."
+            : $"Using authoritative multiclient\\{safeId} DAT workspace.";
 
         return new PrepareResult
         {
@@ -129,6 +129,146 @@ public static class ClientInstanceWorkspace
             Detail = detail,
             CopiedDats = copiedDats,
         };
+    }
+
+    /// <summary>
+    /// After DDD updates any portal.dat/cell.dat (main or a multiclient workspace),
+    /// that newest pair becomes authoritative: copy it to the primary install and to
+    /// every other multiclient workspace that is behind. Prevents re-download loops
+    /// when one account is current and another (or main) is still on the old revision.
+    /// </summary>
+    public static bool SyncAuthoritativeDats(
+        string installDirectory,
+        Action<string>? report = null,
+        string? alsoEnsureDirectory = null)
+    {
+        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
+        {
+            return false;
+        }
+
+        var copiedAny = false;
+        foreach (var datName in ExclusiveDatFiles)
+        {
+            var locations = ListDatLocations(installDirectory, datName, alsoEnsureDirectory);
+            var existing = locations
+                .Where(File.Exists)
+                .Select(path => new FileInfo(path))
+                .ToArray();
+            if (existing.Length == 0)
+            {
+                if (alsoEnsureDirectory is null)
+                {
+                    continue;
+                }
+
+                throw new FileNotFoundException(
+                    $"Install is missing {datName} (required for dual client).",
+                    Path.Combine(installDirectory, datName));
+            }
+
+            // Newest write time wins; larger size breaks ties (DDD grows these files).
+            var newest = existing
+                .OrderByDescending(info => info.LastWriteTimeUtc)
+                .ThenByDescending(info => info.Length)
+                .First();
+
+            foreach (var destinationPath in locations.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (destinationPath.Equals(newest.FullName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (File.Exists(destinationPath))
+                {
+                    var destInfo = new FileInfo(destinationPath);
+                    if (destInfo.LastWriteTimeUtc > newest.LastWriteTimeUtc ||
+                        (destInfo.LastWriteTimeUtc == newest.LastWriteTimeUtc &&
+                         destInfo.Length >= newest.Length))
+                    {
+                        continue;
+                    }
+                }
+
+                var destinationDirectory = Path.GetDirectoryName(destinationPath);
+                if (!string.IsNullOrEmpty(destinationDirectory))
+                {
+                    Directory.CreateDirectory(destinationDirectory);
+                }
+
+                try
+                {
+                    report?.Invoke(
+                        $"Syncing authoritative {datName} → {DescribeDatLocation(installDirectory, destinationPath)}...");
+                    File.Copy(newest.FullName, destinationPath, overwrite: true);
+                    try
+                    {
+                        File.SetLastWriteTimeUtc(destinationPath, newest.LastWriteTimeUtc);
+                    }
+                    catch
+                    {
+                        // Non-fatal.
+                    }
+
+                    copiedAny = true;
+                }
+                catch (IOException ex)
+                {
+                    // Destination locked by a running client — leave it; next launch retries.
+                    report?.Invoke(
+                        $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)} " +
+                        $"(in use): {ex.Message}");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    report?.Invoke(
+                        $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)}: {ex.Message}");
+                }
+            }
+        }
+
+        return copiedAny;
+    }
+
+    private static IReadOnlyList<string> ListDatLocations(
+        string installDirectory,
+        string datName,
+        string? alsoEnsureDirectory)
+    {
+        var paths = new List<string>
+        {
+            Path.Combine(installDirectory, datName),
+        };
+
+        if (!string.IsNullOrWhiteSpace(alsoEnsureDirectory))
+        {
+            paths.Add(Path.Combine(alsoEnsureDirectory, datName));
+        }
+
+        var multiclientRoot = Path.Combine(installDirectory, RootFolderName);
+        if (Directory.Exists(multiclientRoot))
+        {
+            foreach (var directory in Directory.EnumerateDirectories(multiclientRoot))
+            {
+                paths.Add(Path.Combine(directory, datName));
+            }
+        }
+
+        return paths;
+    }
+
+    private static string DescribeDatLocation(string installDirectory, string datPath)
+    {
+        var fullInstall = Path.GetFullPath(installDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullDat = Path.GetFullPath(datPath);
+        if (fullDat.StartsWith(fullInstall + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return fullDat[(fullInstall.Length + 1)..];
+        }
+
+        return Path.GetFileName(datPath);
     }
 
     private static void LinkRuntimeFiles(string installDirectory, string workingDirectory, Action<string>? report)
@@ -177,56 +317,6 @@ public static class ClientInstanceWorkspace
 
             EnsureLinkedOrCopied(sourcePath, destPath, report);
         }
-    }
-
-    private static bool EnsureExclusiveDats(string installDirectory, string workingDirectory, Action<string>? report)
-    {
-        var copiedAny = false;
-        foreach (var datName in ExclusiveDatFiles)
-        {
-            var sourcePath = Path.Combine(installDirectory, datName);
-            if (!File.Exists(sourcePath))
-            {
-                throw new FileNotFoundException(
-                    $"Install is missing {datName} (required for dual client).",
-                    sourcePath);
-            }
-
-            var destPath = Path.Combine(workingDirectory, datName);
-            if (File.Exists(destPath))
-            {
-                var sourceInfo = new FileInfo(sourcePath);
-                var destInfo = new FileInfo(destPath);
-                // Private portal.dat/cell.dat are updated in-place by DDD after login.
-                // Only replace them when the *primary* install is strictly newer.
-                // A size mismatch with a newer private file means DDD already advanced
-                // this workspace (e.g. 6000 vs main 1680); overwriting caused re-DDD loops.
-                if (sourceInfo.LastWriteTimeUtc <= destInfo.LastWriteTimeUtc)
-                {
-                    continue;
-                }
-
-                report?.Invoke($"Refreshing {datName} from primary install (primary is newer)...");
-            }
-            else
-            {
-                report?.Invoke($"Copying {datName} for private instance (may take a minute)...");
-            }
-
-            File.Copy(sourcePath, destPath, overwrite: true);
-            try
-            {
-                File.SetLastWriteTimeUtc(destPath, File.GetLastWriteTimeUtc(sourcePath));
-            }
-            catch
-            {
-                // Non-fatal.
-            }
-
-            copiedAny = true;
-        }
-
-        return copiedAny;
     }
 
     private static void EnsureLinkedOrCopied(string sourcePath, string destPath, Action<string>? report)

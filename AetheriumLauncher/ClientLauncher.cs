@@ -56,6 +56,10 @@ public static class ClientLauncher
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
         }
 
+        // Promote the newest DDD-updated portal/cell pair across main + all
+        // multiclient workspaces before choosing where this launch runs.
+        ClientInstanceWorkspace.SyncAuthoritativeDats(installDirectory, report);
+
         var runningClientDirectories = GetRunningClientDirectories();
         var otherClientRunning = runningClientDirectories.Count > 0;
         var sameInstallAlreadyRunning = runningClientDirectories.Any(directory =>
