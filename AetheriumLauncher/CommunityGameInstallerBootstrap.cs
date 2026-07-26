@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
 using System.Diagnostics;
 using CG.Web.MegaApiClient;
+using SharpCompress.Archives;
+using SharpCompress.Archives.SevenZip;
+using SharpCompress.Common;
 
 namespace AcLegacyLauncher;
 
@@ -251,16 +254,6 @@ internal static class CommunityGameInstallerBootstrap
         string sourceDirectory,
         CancellationToken cancellationToken)
     {
-        var tarPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "tar.exe");
-        if (!File.Exists(tarPath))
-        {
-            throw new FileNotFoundException(
-                "Windows tar.exe is required to unpack the verified ACCPP archive.",
-                tarPath);
-        }
-
         Exception? lastFailure = null;
         for (var attempt = 1; attempt <= 2; attempt++)
         {
@@ -269,17 +262,11 @@ internal static class CommunityGameInstallerBootstrap
 
             try
             {
-                var result = await RunProcessAsync(
-                    tarPath,
-                    ["-xf", archivePath, "-C", sourceDirectory],
-                    sourceDirectory,
+                // Windows tar.exe cannot decode LZMA inside this ACCPP .7z
+                // ("LZMA codec is unsupported"). SharpCompress handles it.
+                await Task.Run(
+                    () => ExtractSevenZipArchive(archivePath, sourceDirectory),
                     cancellationToken);
-                if (result.ExitCode != 0)
-                {
-                    throw new InvalidDataException(
-                        $"Windows archive extraction failed with exit code " +
-                        $"{result.ExitCode}: {result.Error}");
-                }
 
                 await VerifyInstallerAsync(
                     Path.Combine(sourceDirectory, "ac1install.exe"),
@@ -287,7 +274,7 @@ internal static class CommunityGameInstallerBootstrap
                 return;
             }
             catch (Exception ex) when (
-                ex is IOException or InvalidDataException)
+                ex is IOException or InvalidDataException or InvalidOperationException)
             {
                 lastFailure = ex;
             }
@@ -296,6 +283,22 @@ internal static class CommunityGameInstallerBootstrap
         throw new InvalidDataException(
             "The verified ACCPP archive could not be extracted intact after two attempts.",
             lastFailure);
+    }
+
+    private static void ExtractSevenZipArchive(string archivePath, string sourceDirectory)
+    {
+        var destinationRoot = Path.GetFullPath(sourceDirectory);
+        Directory.CreateDirectory(destinationRoot);
+
+        // WriteToDirectory extracts sequentially — required for solid LZMA .7z archives.
+        using var archive = SevenZipArchive.OpenArchive(archivePath);
+        archive.WriteToDirectory(
+            destinationRoot,
+            new ExtractionOptions
+            {
+                ExtractFullPath = true,
+                Overwrite = true,
+            });
     }
 
     private static async Task ExtractAndVerifyLegacyPayloadAsync(

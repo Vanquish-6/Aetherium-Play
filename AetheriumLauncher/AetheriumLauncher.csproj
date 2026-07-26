@@ -35,6 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.50.1" />
     <ProjectReference Include="..\ThirdParty\MegaApiClient\MegaApiClient\MegaApiClient.csproj" />
     <!-- Override MegaApiClient's old minimum transitive versions with patched releases. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
