@@ -133,9 +133,9 @@ public static class ClientInstanceWorkspace
 
     /// <summary>
     /// After DDD updates any portal.dat/cell.dat (main or a multiclient workspace),
-    /// that newest pair becomes authoritative: copy it to the primary install and to
-    /// every other multiclient workspace that is behind. Prevents re-download loops
-    /// when one account is current and another (or main) is still on the old revision.
+    /// the largest intact pair becomes authoritative and is copied to every other
+    /// workspace that is behind. Authority is by file size (DDD grows these files),
+    /// not mtime — a touched stale main copy must never overwrite a larger updated pair.
     /// </summary>
     public static bool SyncAuthoritativeDats(
         string installDirectory,
@@ -147,103 +147,83 @@ public static class ClientInstanceWorkspace
             return false;
         }
 
-        var copiedAny = false;
-        foreach (var datName in ExclusiveDatFiles)
+        var workspaces = ListDatWorkspaces(installDirectory, alsoEnsureDirectory);
+        if (workspaces.Count == 0)
         {
-            var locations = ListDatLocations(installDirectory, datName, alsoEnsureDirectory);
-            var existing = locations
-                .Where(File.Exists)
-                .Select(path => new FileInfo(path))
-                .ToArray();
-            if (existing.Length == 0)
-            {
-                if (alsoEnsureDirectory is null)
-                {
-                    continue;
-                }
+            return false;
+        }
 
-                throw new FileNotFoundException(
-                    $"Install is missing {datName} (required for dual client).",
-                    Path.Combine(installDirectory, datName));
+        if (!string.IsNullOrWhiteSpace(alsoEnsureDirectory))
+        {
+            Directory.CreateDirectory(alsoEnsureDirectory);
+        }
+
+        DatWorkspace? authoritative = null;
+        foreach (var workspace in workspaces)
+        {
+            if (!TryReadDatPair(workspace, out var pair))
+            {
+                continue;
             }
 
-            // Newest write time wins; larger size breaks ties (DDD grows these files).
-            var newest = existing
-                .OrderByDescending(info => info.LastWriteTimeUtc)
-                .ThenByDescending(info => info.Length)
-                .First();
-
-            foreach (var destinationPath in locations.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (authoritative is null || CompareDatPairs(pair, authoritative.Value.Pair) > 0)
             {
-                if (destinationPath.Equals(newest.FullName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                authoritative = new DatWorkspace(workspace, pair);
+            }
+        }
 
-                if (File.Exists(destinationPath))
-                {
-                    var destInfo = new FileInfo(destinationPath);
-                    if (destInfo.LastWriteTimeUtc > newest.LastWriteTimeUtc ||
-                        (destInfo.LastWriteTimeUtc == newest.LastWriteTimeUtc &&
-                         destInfo.Length >= newest.Length))
-                    {
-                        continue;
-                    }
-                }
+        if (authoritative is null)
+        {
+            if (alsoEnsureDirectory is null)
+            {
+                return false;
+            }
 
-                var destinationDirectory = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destinationDirectory))
-                {
-                    Directory.CreateDirectory(destinationDirectory);
-                }
+            throw new FileNotFoundException(
+                "Install is missing portal.dat/cell.dat (required for dual client).",
+                Path.Combine(installDirectory, ExclusiveDatFiles[0]));
+        }
 
-                try
-                {
-                    report?.Invoke(
-                        $"Syncing authoritative {datName} → {DescribeDatLocation(installDirectory, destinationPath)}...");
-                    File.Copy(newest.FullName, destinationPath, overwrite: true);
-                    try
-                    {
-                        File.SetLastWriteTimeUtc(destinationPath, newest.LastWriteTimeUtc);
-                    }
-                    catch
-                    {
-                        // Non-fatal.
-                    }
+        report?.Invoke(
+            $"Authoritative DATs: {DescribeWorkspace(installDirectory, authoritative.Value.Directory)} " +
+            $"(portal {authoritative.Value.Pair.PortalLength:N0} bytes, " +
+            $"cell {authoritative.Value.Pair.CellLength:N0} bytes).");
 
-                    copiedAny = true;
-                }
-                catch (IOException ex)
-                {
-                    // Destination locked by a running client — leave it; next launch retries.
-                    report?.Invoke(
-                        $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)} " +
-                        $"(in use): {ex.Message}");
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    report?.Invoke(
-                        $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)}: {ex.Message}");
-                }
+        var copiedAny = false;
+        foreach (var workspace in workspaces.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (workspace.Equals(authoritative.Value.Directory, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryReadDatPair(workspace, out var existing) &&
+                CompareDatPairs(existing, authoritative.Value.Pair) >= 0)
+            {
+                continue;
+            }
+
+            if (CopyDatPair(authoritative.Value.Directory, workspace, installDirectory, report))
+            {
+                copiedAny = true;
             }
         }
 
         return copiedAny;
     }
 
-    private static IReadOnlyList<string> ListDatLocations(
+    private static IReadOnlyList<string> ListDatWorkspaces(
         string installDirectory,
-        string datName,
         string? alsoEnsureDirectory)
     {
-        var paths = new List<string>
+        var directories = new List<string>
         {
-            Path.Combine(installDirectory, datName),
+            Path.GetFullPath(installDirectory),
         };
 
         if (!string.IsNullOrWhiteSpace(alsoEnsureDirectory))
         {
-            paths.Add(Path.Combine(alsoEnsureDirectory, datName));
+            directories.Add(Path.GetFullPath(alsoEnsureDirectory));
         }
 
         var multiclientRoot = Path.Combine(installDirectory, RootFolderName);
@@ -251,11 +231,111 @@ public static class ClientInstanceWorkspace
         {
             foreach (var directory in Directory.EnumerateDirectories(multiclientRoot))
             {
-                paths.Add(Path.Combine(directory, datName));
+                directories.Add(Path.GetFullPath(directory));
             }
         }
 
-        return paths;
+        return directories;
+    }
+
+    private static bool TryReadDatPair(string directory, out DatPair pair)
+    {
+        var portalPath = Path.Combine(directory, "portal.dat");
+        var cellPath = Path.Combine(directory, "cell.dat");
+        if (!File.Exists(portalPath) || !File.Exists(cellPath))
+        {
+            pair = default;
+            return false;
+        }
+
+        var portal = new FileInfo(portalPath);
+        var cell = new FileInfo(cellPath);
+        pair = new DatPair(portal.Length, cell.Length, portal.LastWriteTimeUtc, cell.LastWriteTimeUtc);
+        return true;
+    }
+
+    /// <summary>
+    /// Positive when left is ahead of right. Size wins (DDD grows DATs); mtime is tie-break only.
+    /// </summary>
+    private static int CompareDatPairs(DatPair left, DatPair right)
+    {
+        var portal = left.PortalLength.CompareTo(right.PortalLength);
+        if (portal != 0)
+        {
+            return portal;
+        }
+
+        var cell = left.CellLength.CompareTo(right.CellLength);
+        if (cell != 0)
+        {
+            return cell;
+        }
+
+        var stamp = left.NewestWriteUtc.CompareTo(right.NewestWriteUtc);
+        return stamp;
+    }
+
+    private static bool CopyDatPair(
+        string sourceDirectory,
+        string destinationDirectory,
+        string installDirectory,
+        Action<string>? report)
+    {
+        Directory.CreateDirectory(destinationDirectory);
+        var copiedAny = false;
+        foreach (var datName in ExclusiveDatFiles)
+        {
+            var sourcePath = Path.Combine(sourceDirectory, datName);
+            var destinationPath = Path.Combine(destinationDirectory, datName);
+            try
+            {
+                report?.Invoke(
+                    $"Syncing authoritative {datName} → {DescribeDatLocation(installDirectory, destinationPath)}...");
+                File.Copy(sourcePath, destinationPath, overwrite: true);
+                try
+                {
+                    File.SetLastWriteTimeUtc(destinationPath, File.GetLastWriteTimeUtc(sourcePath));
+                }
+                catch
+                {
+                    // Non-fatal.
+                }
+
+                copiedAny = true;
+            }
+            catch (IOException ex)
+            {
+                report?.Invoke(
+                    $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)} " +
+                    $"(in use): {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                report?.Invoke(
+                    $"Could not sync {datName} to {DescribeDatLocation(installDirectory, destinationPath)}: {ex.Message}");
+            }
+        }
+
+        return copiedAny;
+    }
+
+    private static string DescribeWorkspace(string installDirectory, string workspaceDirectory)
+    {
+        var fullInstall = Path.GetFullPath(installDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullWorkspace = Path.GetFullPath(workspaceDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (fullWorkspace.Equals(fullInstall, StringComparison.OrdinalIgnoreCase))
+        {
+            return "primary install";
+        }
+
+        if (fullWorkspace.StartsWith(fullInstall + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return fullWorkspace[(fullInstall.Length + 1)..];
+        }
+
+        return fullWorkspace;
     }
 
     private static string DescribeDatLocation(string installDirectory, string datPath)
@@ -315,8 +395,33 @@ public static class ClientInstanceWorkspace
                 continue;
             }
 
+            // Real copy for client.exe so GetModuleFileName cannot resolve back to the
+            // primary install via hardlink and load/update the wrong DAT folder.
+            if (name.Equals("client.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                EnsureCopied(sourcePath, destPath, report);
+                continue;
+            }
+
             EnsureLinkedOrCopied(sourcePath, destPath, report);
         }
+    }
+
+    private static void EnsureCopied(string sourcePath, string destPath, Action<string>? report)
+    {
+        var sourceInfo = new FileInfo(sourcePath);
+        if (File.Exists(destPath))
+        {
+            var destInfo = new FileInfo(destPath);
+            if (destInfo.Length == sourceInfo.Length &&
+                destInfo.LastWriteTimeUtc >= sourceInfo.LastWriteTimeUtc)
+            {
+                return;
+            }
+        }
+
+        report?.Invoke($"Copying {Path.GetFileName(sourcePath)} into private workspace...");
+        File.Copy(sourcePath, destPath, overwrite: true);
     }
 
     private static void EnsureLinkedOrCopied(string sourcePath, string destPath, Action<string>? report)
@@ -343,6 +448,18 @@ public static class ClientInstanceWorkspace
         report?.Invoke($"Hardlink failed for {Path.GetFileName(sourcePath)}; copying instead.");
         File.Copy(sourcePath, destPath, overwrite: true);
     }
+
+    private readonly record struct DatPair(
+        long PortalLength,
+        long CellLength,
+        DateTime PortalWriteUtc,
+        DateTime CellWriteUtc)
+    {
+        public DateTime NewestWriteUtc =>
+            PortalWriteUtc >= CellWriteUtc ? PortalWriteUtc : CellWriteUtc;
+    }
+
+    private readonly record struct DatWorkspace(string Directory, DatPair Pair);
 
     private static class Native
     {

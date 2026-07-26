@@ -62,26 +62,14 @@ public static class ClientLauncher
 
         var runningClientDirectories = GetRunningClientDirectories();
         var otherClientRunning = runningClientDirectories.Count > 0;
-        var sameInstallAlreadyRunning = runningClientDirectories.Any(directory =>
-            IsSameInstallTree(directory, installDirectory));
         var multiInstallProfiles = ProfileStore.HasMultipleInstallRoots();
 
-        // Prefer a stable per-account DAT workspace once it exists (or when multiple
-        // profiles share this install). Solo Play used to bounce back to the primary
-        // portal/cell after a dual launch, which looked like "DATs not saved to profile."
         var instanceId = string.IsNullOrWhiteSpace(instanceKey) ? config.TicketKey : instanceKey;
-        var privateWorkspaceExists = ClientInstanceWorkspace.PrivateWorkspaceExists(
-            installDirectory,
-            instanceId);
-        var multiProfilesOnInstall = ProfileStore.CountProfilesForInstall(installDirectory) > 1;
 
-        // Private DAT copies when two clients would share one install's portal/cell,
-        // when this account already has a private workspace, or when profiles require it.
-        // Separate folders (main vs admin) already have their own dats — don't copy.
-        var usePrivateInstance = forcePrivateDatInstance
-            || sameInstallAlreadyRunning
-            || privateWorkspaceExists
-            || multiProfilesOnInstall;
+        // Always use a stable per-account DAT workspace. Solo Play bouncing between
+        // primary install and multiclient\{account} was still causing re-DDD even after
+        // sync — keep one folder per account for portal/cell for the life of that account.
+        var usePrivateInstance = !string.IsNullOrWhiteSpace(instanceId);
 
         // Windowed + no CaptureMouse whenever dual is likely across one OR many folders.
         var useDualClientDisplay = usePrivateInstance
