@@ -61,6 +61,24 @@ public static class ClientInstanceWorkspace
         return string.IsNullOrWhiteSpace(value) ? "client" : value;
     }
 
+    /// <summary>
+    /// True when a prior dual/profile launch already seeded private DATs for this account.
+    /// </summary>
+    public static bool PrivateWorkspaceExists(string installDirectory, string? instanceId)
+    {
+        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
+        {
+            return false;
+        }
+
+        var workingDirectory = Path.Combine(
+            installDirectory,
+            RootFolderName,
+            SanitizeInstanceId(instanceId));
+        return ExclusiveDatFiles.All(datName =>
+            File.Exists(Path.Combine(workingDirectory, datName)));
+    }
+
     public static bool IsClientProcessRunning()
     {
         try
@@ -179,15 +197,22 @@ public static class ClientInstanceWorkspace
             {
                 var sourceInfo = new FileInfo(sourcePath);
                 var destInfo = new FileInfo(destPath);
-                // Refresh if the primary install dats were replaced/updated.
-                if (destInfo.Length == sourceInfo.Length &&
-                    destInfo.LastWriteTimeUtc >= sourceInfo.LastWriteTimeUtc)
+                // Private portal.dat/cell.dat are updated in-place by DDD after login.
+                // Only replace them when the *primary* install is strictly newer.
+                // A size mismatch with a newer private file means DDD already advanced
+                // this workspace (e.g. 6000 vs main 1680); overwriting caused re-DDD loops.
+                if (sourceInfo.LastWriteTimeUtc <= destInfo.LastWriteTimeUtc)
                 {
                     continue;
                 }
+
+                report?.Invoke($"Refreshing {datName} from primary install (primary is newer)...");
+            }
+            else
+            {
+                report?.Invoke($"Copying {datName} for private instance (may take a minute)...");
             }
 
-            report?.Invoke($"Copying {datName} for private instance (may take a minute)...");
             File.Copy(sourcePath, destPath, overwrite: true);
             try
             {

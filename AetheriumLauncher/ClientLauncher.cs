@@ -62,9 +62,22 @@ public static class ClientLauncher
             IsSameInstallTree(directory, installDirectory));
         var multiInstallProfiles = ProfileStore.HasMultipleInstallRoots();
 
-        // Private DAT copies only when two clients would share one install's portal/cell.
+        // Prefer a stable per-account DAT workspace once it exists (or when multiple
+        // profiles share this install). Solo Play used to bounce back to the primary
+        // portal/cell after a dual launch, which looked like "DATs not saved to profile."
+        var instanceId = string.IsNullOrWhiteSpace(instanceKey) ? config.TicketKey : instanceKey;
+        var privateWorkspaceExists = ClientInstanceWorkspace.PrivateWorkspaceExists(
+            installDirectory,
+            instanceId);
+        var multiProfilesOnInstall = ProfileStore.CountProfilesForInstall(installDirectory) > 1;
+
+        // Private DAT copies when two clients would share one install's portal/cell,
+        // when this account already has a private workspace, or when profiles require it.
         // Separate folders (main vs admin) already have their own dats — don't copy.
-        var usePrivateInstance = forcePrivateDatInstance || sameInstallAlreadyRunning;
+        var usePrivateInstance = forcePrivateDatInstance
+            || sameInstallAlreadyRunning
+            || privateWorkspaceExists
+            || multiProfilesOnInstall;
 
         // Windowed + no CaptureMouse whenever dual is likely across one OR many folders.
         var useDualClientDisplay = usePrivateInstance
@@ -79,8 +92,7 @@ public static class ClientLauncher
 
         if (usePrivateInstance)
         {
-            var key = string.IsNullOrWhiteSpace(instanceKey) ? config.TicketKey : instanceKey;
-            var prepared = ClientInstanceWorkspace.Ensure(installDirectory, key!, report);
+            var prepared = ClientInstanceWorkspace.Ensure(installDirectory, instanceId!, report);
             workingDirectory = prepared.WorkingDirectory;
             clientPath = prepared.ClientExePath;
             instanceDetail = prepared.Detail;
