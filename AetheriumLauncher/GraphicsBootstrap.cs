@@ -75,90 +75,27 @@ internal static class GraphicsBootstrap
 
     internal static void SeedUserPreferencesDisplay(bool fullScreen = true)
     {
+        // EOR and DM share Documents\Asheron's Call\UserPreferences.ini and *.keymap.
+        // Never rewrite an existing file — only seed a minimal Display section if missing.
         var preferencesDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "Asheron's Call");
         var preferencesPath = Path.Combine(preferencesDirectory, "UserPreferences.ini");
-        var fullScreenValue = fullScreen ? "True" : "False";
-
-        if (!File.Exists(preferencesPath))
+        if (File.Exists(preferencesPath))
         {
-            // This file is normally created by the game itself after it starts up - on a
-            // brand-new install (exactly the case that hits the "set your desktop to
-            // 16-bit" error) it doesn't exist yet, so this fix would otherwise silently
-            // never apply before the very first, failing launch attempt. Seed a minimal
-            // valid file up front instead of waiting for the game to create one.
-            Directory.CreateDirectory(preferencesDirectory);
-            File.WriteAllLines(preferencesPath, new[]
-            {
-                "[Display]",
-                "RefreshRate=Auto",
-                "Resolution=800x600",
-                $"FullScreen={fullScreenValue}",
-                "SyncToRefresh=False",
-            });
             return;
         }
 
-        var lines = File.ReadAllLines(preferencesPath);
-        var inDisplaySection = false;
-        var changed = false;
-        var sawFullScreen = false;
-
-        for (var index = 0; index < lines.Length; index++)
+        var fullScreenValue = fullScreen ? "True" : "False";
+        Directory.CreateDirectory(preferencesDirectory);
+        File.WriteAllLines(preferencesPath, new[]
         {
-            var trimmed = lines[index].Trim();
-
-            if (trimmed.StartsWith('[') && trimmed.EndsWith(']'))
-            {
-                inDisplaySection = trimmed.Equals("[Display]", StringComparison.OrdinalIgnoreCase);
-                continue;
-            }
-
-            if (!inDisplaySection)
-            {
-                continue;
-            }
-
-            if (trimmed.StartsWith("Resolution=", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!trimmed.Equals("Resolution=800x600", StringComparison.OrdinalIgnoreCase))
-                {
-                    lines[index] = "Resolution=800x600";
-                    changed = true;
-                }
-            }
-            else if (trimmed.StartsWith("FullScreen=", StringComparison.OrdinalIgnoreCase))
-            {
-                sawFullScreen = true;
-                var desired = $"FullScreen={fullScreenValue}";
-                if (!trimmed.Equals(desired, StringComparison.OrdinalIgnoreCase))
-                {
-                    lines[index] = desired;
-                    changed = true;
-                }
-            }
-        }
-
-        if (!sawFullScreen)
-        {
-            // Append into [Display] if missing.
-            var displayIndex = Array.FindIndex(
-                lines,
-                line => line.Trim().Equals("[Display]", StringComparison.OrdinalIgnoreCase));
-            if (displayIndex >= 0)
-            {
-                var list = lines.ToList();
-                list.Insert(displayIndex + 1, $"FullScreen={fullScreenValue}");
-                lines = list.ToArray();
-                changed = true;
-            }
-        }
-
-        if (changed)
-        {
-            File.WriteAllLines(preferencesPath, lines);
-        }
+            "[Display]",
+            "RefreshRate=Auto",
+            "Resolution=800x600",
+            $"FullScreen={fullScreenValue}",
+            "SyncToRefresh=False",
+        });
     }
 
     /// <summary>
@@ -177,12 +114,58 @@ internal static class GraphicsBootstrap
             key.SetValue("DoubleBuffer", 2, RegistryValueKind.DWord);
             key.SetValue("FullScreen", 0, RegistryValueKind.DWord);
             key.SetValue("ZBuffer2", 0, RegistryValueKind.DWord);
-            key.SetValue("ScreenWidth", 800, RegistryValueKind.DWord);
-            key.SetValue("ScreenHeight", 600, RegistryValueKind.DWord);
+            // Do not force ScreenWidth/Height — shared with EOR.
         }
 
         SeedUserPreferencesDisplay(fullScreen: false);
 
+        foreach (var directory in CollectDirectories(workingDirectory, additionalClientDirectories))
+        {
+            ApplyMulticlientDgVoodooConfig(directory);
+        }
+    }
+
+    /// <summary>
+    /// Solo play: restore dgVoodoo's normal captured-mouse behavior.
+    /// Older builds forced the dual-client flags into solo workspaces.
+    /// </summary>
+    internal static void ApplySoloCaptureMouseSettings(
+        string workingDirectory,
+        IEnumerable<string>? additionalClientDirectories = null)
+    {
+        foreach (var directory in CollectDirectories(workingDirectory, additionalClientDirectories))
+        {
+            ApplyDgVoodooFlags(
+                directory,
+                captureMouse: true,
+                fullScreenMode: null,
+                freeMouse: false,
+                centerAppWindow: null);
+        }
+    }
+
+    /// <summary>
+    /// Legacy helper — prefer <see cref="ApplySoloCaptureMouseSettings"/> for solo play.
+    /// </summary>
+    internal static void ApplyInputFriendlyDgVoodooConfig(string workingDirectory)
+    {
+        ApplySoloCaptureMouseSettings(workingDirectory);
+    }
+
+    internal static void ApplyMulticlientDgVoodooConfig(string workingDirectory)
+    {
+        ApplyDgVoodooFlags(
+            workingDirectory,
+            captureMouse: false,
+            fullScreenMode: false,
+            freeMouse: true,
+            centerAppWindow: false);
+    }
+
+    private static IEnumerable<string> CollectDirectories(
+        string workingDirectory,
+        IEnumerable<string>? additionalClientDirectories)
+    {
         var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             workingDirectory,
@@ -199,34 +182,7 @@ internal static class GraphicsBootstrap
             }
         }
 
-        foreach (var directory in directories)
-        {
-            ApplyMulticlientDgVoodooConfig(directory);
-        }
-    }
-
-    /// <summary>
-    /// CaptureMouse alone can steal keyboard even in windowed mode with two clients.
-    /// Safe to apply on every launch.
-    /// </summary>
-    internal static void ApplyInputFriendlyDgVoodooConfig(string workingDirectory)
-    {
-        ApplyDgVoodooFlags(
-            workingDirectory,
-            captureMouse: false,
-            fullScreenMode: null,
-            freeMouse: true,
-            centerAppWindow: null);
-    }
-
-    internal static void ApplyMulticlientDgVoodooConfig(string workingDirectory)
-    {
-        ApplyDgVoodooFlags(
-            workingDirectory,
-            captureMouse: false,
-            fullScreenMode: false,
-            freeMouse: true,
-            centerAppWindow: false);
+        return directories;
     }
 
     private static void ApplyDgVoodooFlags(

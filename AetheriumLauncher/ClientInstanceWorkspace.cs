@@ -108,7 +108,7 @@ public static class ClientInstanceWorkspace
         report?.Invoke($"Preparing multiclient folder: {workingDirectory}");
 
         LinkRuntimeFiles(installDirectory, workingDirectory, report);
-        var copiedDats = SyncAuthoritativeDats(installDirectory, report, workingDirectory);
+        var copiedDats = EnsureStablePrivateDats(installDirectory, workingDirectory, report);
 
         var clientExe = Path.Combine(workingDirectory, "client.exe");
         if (!File.Exists(clientExe))
@@ -119,8 +119,8 @@ public static class ClientInstanceWorkspace
         }
 
         var detail = copiedDats
-            ? $"Private portal.dat/cell.dat synced under multiclient\\{safeId} from the newest install copy."
-            : $"Using authoritative multiclient\\{safeId} DAT workspace.";
+            ? $"Created stable private DAT workspace multiclient\\{safeId}."
+            : $"Preserved stable private DAT workspace multiclient\\{safeId}.";
 
         return new PrepareResult
         {
@@ -132,12 +132,118 @@ public static class ClientInstanceWorkspace
     }
 
     /// <summary>
+    /// Seeds an account's private DAT pair exactly once. DDD updates these files
+    /// in place, so later launches must never replace them from the primary install
+    /// or another account based on size or timestamps.
+    /// </summary>
+    private static bool EnsureStablePrivateDats(
+        string installDirectory,
+        string workingDirectory,
+        Action<string>? report)
+    {
+        var privatePaths = ExclusiveDatFiles
+            .Select(name => Path.Combine(workingDirectory, name))
+            .ToArray();
+        var privateExists = privatePaths.Select(File.Exists).ToArray();
+
+        if (privateExists.All(exists => exists))
+        {
+            ReportDatPair("Preserving private DATs", privatePaths, report);
+            return false;
+        }
+
+        if (privateExists.Any(exists => exists))
+        {
+            var missing = privatePaths
+                .Where(path => !File.Exists(path))
+                .Select(Path.GetFileName);
+            throw new InvalidDataException(
+                $"Private DAT workspace is incomplete ({string.Join(", ", missing)} missing): " +
+                workingDirectory);
+        }
+
+        var sourcePaths = ExclusiveDatFiles
+            .Select(name => Path.Combine(installDirectory, name))
+            .ToArray();
+        var missingSources = sourcePaths
+            .Where(path => !File.Exists(path))
+            .Select(Path.GetFileName)
+            .ToArray();
+        if (missingSources.Length != 0)
+        {
+            throw new FileNotFoundException(
+                $"Primary install is missing required DAT files: {string.Join(", ", missingSources)}",
+                installDirectory);
+        }
+
+        Directory.CreateDirectory(workingDirectory);
+        var temporaryPaths = privatePaths
+            .Select(path => path + $".seed-{Guid.NewGuid():N}.tmp")
+            .ToArray();
+        try
+        {
+            for (var index = 0; index < sourcePaths.Length; index++)
+            {
+                report?.Invoke(
+                    $"Seeding private {Path.GetFileName(privatePaths[index])}: " +
+                    privatePaths[index]);
+                File.Copy(sourcePaths[index], temporaryPaths[index], overwrite: false);
+            }
+
+            for (var index = 0; index < privatePaths.Length; index++)
+            {
+                File.Move(temporaryPaths[index], privatePaths[index], overwrite: false);
+            }
+        }
+        catch
+        {
+            // Neither final path existed when seeding began, so any final file
+            // visible here is a launcher-owned partial copy and is safe to roll back.
+            foreach (var path in temporaryPaths.Concat(privatePaths))
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch
+                {
+                    // Best-effort cleanup of launcher-owned seed files.
+                }
+            }
+
+            throw;
+        }
+
+        ReportDatPair("Seeded private DATs", privatePaths, report);
+        return true;
+    }
+
+    private static void ReportDatPair(
+        string prefix,
+        IReadOnlyList<string> paths,
+        Action<string>? report)
+    {
+        if (report is null)
+        {
+            return;
+        }
+
+        var descriptions = paths.Select(path =>
+        {
+            var file = new FileInfo(path);
+            return $"{path} ({file.Length:N0} bytes, {file.LastWriteTimeUtc:O})";
+        });
+        report($"{prefix}: {string.Join("; ", descriptions)}");
+    }
+
+    /// <summary>
     /// After DDD updates any portal.dat/cell.dat (main or a multiclient workspace),
     /// the largest intact pair becomes authoritative and is copied to every other
     /// workspace that is behind. Authority is by file size (DDD grows these files),
     /// not mtime — a touched stale main copy must never overwrite a larger updated pair.
     /// </summary>
-    public static bool SyncAuthoritativeDats(
+    [Obsolete("Cross-workspace DAT synchronization can erase DDD progress.", error: true)]
+    private static bool DeprecatedSyncAuthoritativeDats(
         string installDirectory,
         Action<string>? report = null,
         string? alsoEnsureDirectory = null)
@@ -377,9 +483,10 @@ public static class ClientInstanceWorkspace
                 continue;
             }
 
-            // Keep the instance folder lean: exe/dll/ini/conf the client loads from cwd.
+            // Keep the instance folder lean: runtime files the client loads from cwd.
+            // Default.map is required for keyboard movement and command bindings.
             var ext = Path.GetExtension(name);
-            if (ext is not (".exe" or ".dll" or ".ini" or ".conf" or ".txt" or ".cfg"))
+            if (ext is not (".exe" or ".dll" or ".ini" or ".conf" or ".txt" or ".cfg" or ".map"))
             {
                 continue;
             }

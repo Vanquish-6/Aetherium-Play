@@ -947,7 +947,10 @@ public partial class Form1 : Form
             "Zone and the purple PLAY button both launch client.exe with the parchment settings.\n" +
             "Profiles (Room → Client Profiles / Launch All Profiles) can start dual clients.\n" +
             "Same-folder dual uses private portal/cell copies; different folders (main vs admin) launch from each install.\n" +
-            "Dual launches force windowed + dgVoodoo CaptureMouse=off so keyboard works on both.\n" +
+            "Each account uses a private portal.dat/cell.dat under multiclient\\<account>.\n" +
+            "Solo keeps normal mouse capture; dual-client turns it off only when needed.\n" +
+            "Private folders retain Default.map so keyboard bindings work in game.\n" +
+            "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
             "Tools exposes Open Folder, ACD3DSetup, and ACSET.\n" +
             "Help → Check for Updates uses GitHub Releases.\n" +
             "The black strip at the bottom shows the last few launcher actions.\n\n" +

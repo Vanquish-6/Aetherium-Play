@@ -56,27 +56,18 @@ public static class ClientLauncher
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
         }
 
-        // Promote the newest DDD-updated portal/cell pair across main + all
-        // multiclient workspaces before choosing where this launch runs.
-        ClientInstanceWorkspace.SyncAuthoritativeDats(installDirectory, report);
-
         var runningClientDirectories = GetRunningClientDirectories();
         var otherClientRunning = runningClientDirectories.Count > 0;
-        var multiInstallProfiles = ProfileStore.HasMultipleInstallRoots();
 
         var instanceId = string.IsNullOrWhiteSpace(instanceKey) ? config.TicketKey : instanceKey;
 
-        // Always use a stable per-account DAT workspace. Solo Play bouncing between
-        // primary install and multiclient\{account} was still causing re-DDD even after
-        // sync — keep one folder per account for portal/cell for the life of that account.
+        // Always use a stable per-account DAT workspace so DDD progress sticks.
         var usePrivateInstance = !string.IsNullOrWhiteSpace(instanceId);
 
-        // Windowed + no CaptureMouse whenever dual is likely across one OR many folders.
-        var useDualClientDisplay = usePrivateInstance
-            || otherClientRunning
-            || multiInstallProfiles
-            || forcePrivateDatInstance
-            || !string.IsNullOrWhiteSpace(instanceKey);
+        // Display mode must NOT follow private DAT folders. Only strip mouse
+        // capture when another client is actually running or Launch All.
+        var useDualClientDisplay = otherClientRunning
+            || forcePrivateDatInstance;
 
         string workingDirectory;
         string clientPath;
@@ -113,16 +104,22 @@ public static class ClientLauncher
                 graphicsDetail =
                     "Dual-client display: windowed + CaptureMouse=false on all known client folders.";
             }
-            else if (config.SeedSafeGraphics)
-            {
-                GraphicsBootstrap.SeedSafeGraphicsSettings();
-                GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
-                seededSafeGraphics = true;
-                GraphicsBootstrap.ApplyInputFriendlyDgVoodooConfig(workingDirectory);
-            }
             else
             {
-                GraphicsBootstrap.ApplyInputFriendlyDgVoodooConfig(workingDirectory);
+                // Heal CaptureMouse=false left behind by older builds that treated every
+                // multiclient\{account} launch as dual-client.
+                if (config.SeedSafeGraphics)
+                {
+                    GraphicsBootstrap.SeedSafeGraphicsSettings();
+                    GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
+                    seededSafeGraphics = true;
+                }
+
+                GraphicsBootstrap.ApplySoloCaptureMouseSettings(
+                    workingDirectory,
+                    additionalClientDirectories: new[] { installDirectory });
+                graphicsDetail =
+                    "Solo display: CaptureMouse=true.";
             }
         }
 
