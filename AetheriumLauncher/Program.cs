@@ -307,7 +307,7 @@ static class Program
                 ProcessId = process.Id,
                 StartedAt = DateTimeOffset.Now,
                 result.WorkingDirectory,
-                result.MulticlientDetail,
+                result.LaunchDetail,
             });
             return 0;
         }

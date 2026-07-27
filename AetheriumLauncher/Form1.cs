@@ -32,7 +32,6 @@ public partial class Form1 : Form
     private static readonly Size BackdropDesignSize = new(1514, 956);
     private static readonly RectangleF ConfigOverlayRect = new(660, 248, 700, 410);
     private static readonly RectangleF PkConfigOverlayRect = new(575, 310, 625, 205);
-    private static readonly RectangleF StatusRect = new(12, 921, 1490, 24);
     private static readonly SizeF OverlayLayoutReferenceSize = new(596f, 529f);
     // The launcher name sits centered vertically in the orange title-bar strip (y≈9-42).
     private static readonly RectangleF WindowTitleTextRect = new(24, 8, 420, 35);
@@ -48,8 +47,8 @@ public partial class Form1 : Form
     private static readonly RectangleF HelpTextRect = new(270, 46, 92, 31);
     private static readonly RectangleF PlayHotspotRect = new(945, 695, 495, 210);
     private static readonly RectangleF PlayArtworkRect = new(959, 706, 470, 185);
-    // Village artwork fills the content area between the ad-banner strip (which ends at y≈204 of
-    // the cropped shell) and the status strip, staying inside the gold side borders.
+    // Village artwork fills the content area below the ad-banner strip (which ends at y≈204 of
+    // the cropped shell), staying inside the gold side borders.
     private static readonly RectangleF FeatureArtworkDestRect = new(10, 210, 1494, 696);
     private static readonly RectangleF FeatureArtworkSrcRect = new(0, 0, 1976, 796);
     // The village art bakes the parchment in at art-space (655, 10, 880, 498), which lands at
@@ -72,8 +71,6 @@ public partial class Form1 : Form
     private static readonly Color ParchmentText = Color.FromArgb(66, 38, 13);
     private static readonly Color EntryFill = Color.FromArgb(226, 201, 152);
     private static readonly Color EntryBorder = Color.FromArgb(140, 104, 58);
-    private static readonly Color StatusFill = Color.FromArgb(9, 7, 6);
-    private static readonly Color StatusText = Color.FromArgb(205, 189, 145);
     private static readonly Color ChromeTitleColor = Color.FromArgb(252, 228, 156); // warm golden — readable on orange
     private static readonly Color ChromeMenuColor = Color.FromArgb(34, 52, 154);
     private static readonly Color VioletGlow = Color.FromArgb(187, 68, 170);
@@ -87,7 +84,6 @@ public partial class Form1 : Form
     private readonly TextBox zoneKeyTextBox = new();
     private readonly CheckBox useNoDisplayModeCheckBox = new();
     private readonly CheckBox seedSafeGraphicsCheckBox = new();
-    private readonly TextBox statusTextBox = new();
     private readonly List<TableLayoutPanel> fieldRows = new();
     private readonly List<Label> fieldLabels = new();
     private readonly List<ArcaneButton> toolButtons = new();
@@ -126,8 +122,7 @@ public partial class Form1 : Form
         Shown -= Form1_Shown;
         await UpdateChecker.CheckForUpdatesAsync(
             this,
-            interactive: false,
-            report: AppendStatus);
+            interactive: false);
     }
 
     private void BuildLayout()
@@ -165,7 +160,6 @@ public partial class Form1 : Form
         helpMenu = BuildHelpMenu();
         BuildChromeLabels();
         configOverlay = BuildConfigOverlay();
-        ConfigureStatusBox();
 
         // Chrome text is now drawn directly in ZoneEraSurface.OnPaint (DrawChromeText),
         // so the label controls do NOT need to be in surface.Controls.
@@ -173,7 +167,6 @@ public partial class Form1 : Form
         // against the panel's BackColor (black), not the painted content — adding them
         // here was what caused the black title strip above the orange title bar.
         surface.Controls.Add(configOverlay);
-        surface.Controls.Add(statusTextBox);
 
         LayoutOverlayControls();
         ResumeLayout(true);
@@ -393,9 +386,6 @@ public partial class Form1 : Form
         menu.Items.Add("Browse Install Folder", null, BrowseButton_Click);
         menu.Items.Add("Open Install Folder", null, (_, _) => OpenInstallFolder());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Save as Profile...", null, (_, _) => SaveCurrentAsProfile());
-        menu.Items.Add("Client Profiles...", null, (_, _) => ShowProfilesDialog());
-        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Close());
         return menu;
     }
@@ -421,19 +411,6 @@ public partial class Form1 : Form
         return menu;
     }
 
-    private void ConfigureStatusBox()
-    {
-        statusTextBox.Multiline = true;
-        statusTextBox.ReadOnly = true;
-        statusTextBox.ScrollBars = ScrollBars.None;
-        statusTextBox.BorderStyle = BorderStyle.None;
-        statusTextBox.BackColor = StatusFill;
-        statusTextBox.ForeColor = StatusText;
-        statusTextBox.Font = new Font("Consolas", 8.2f, FontStyle.Regular, GraphicsUnit.Point);
-        statusTextBox.Margin = Padding.Empty;
-        statusTextBox.WordWrap = false;
-    }
-
     private void LayoutOverlayControls()
     {
         if (surface is null || configOverlay is null || windowTitleChromeLabel is null || fileChromeLabel is null ||
@@ -450,7 +427,6 @@ public partial class Form1 : Form
         configOverlay.Bounds = surface.MapFromDesign(
             currentSkin == PkSkinName ? PkConfigOverlayRect : ConfigOverlayRect,
             BackdropDesignSize);
-        statusTextBox.Bounds = surface.MapFromDesign(StatusRect, BackdropDesignSize);
         var surfaceScale = surface.SceneBounds.Height / (float)BackdropDesignSize.Height;
         // The authored 596×529 reference layout leaves generous slack inside the overlay, so boost
         // the fitted scale ~20% to render the form larger/easier to read while still fitting.
@@ -590,7 +566,6 @@ public partial class Form1 : Form
         if (save)
         {
             SaveControlsToConfig();
-            AppendStatus($"Launcher skin changed to {(resolvedSkin == PkSkinName ? "PK" : "Default")}.");
         }
     }
 
@@ -705,7 +680,6 @@ public partial class Form1 : Form
             button.Font = CreateScaledFont("Trebuchet MS", 8.5f, FontStyle.Bold, scale);
         }
 
-        statusTextBox.Font = CreateScaledFont("Consolas", 8.2f, FontStyle.Regular, scale);
         configOverlay.PerformLayout();
     }
 
@@ -933,8 +907,7 @@ public partial class Form1 : Form
     {
         await UpdateChecker.CheckForUpdatesAsync(
             this,
-            interactive: true,
-            report: AppendStatus);
+            interactive: true);
     }
 
     private void ShowAboutDialog()
@@ -942,14 +915,12 @@ public partial class Form1 : Form
         MessageBox.Show(
             this,
             $"{LauncherName} v{UpdateChecker.CurrentVersion}\n\n" +
-            "Room lets you browse the client folder, manage saved profiles, or exit.\n" +
+            "Room lets you browse the client folder or exit.\n" +
             "Zone and the purple PLAY button both launch client.exe with the parchment settings.\n" +
-            "Profiles (Room → Client Profiles) store account presets you can load one at a time.\n" +
             "The client always launches from your install folder so DAT updates stay in one place.\n" +
             "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
             "Tools exposes Open Folder, ACD3DSetup, and ACSET.\n" +
-            "Help → Check for Updates uses GitHub Releases.\n" +
-            "The black strip at the bottom shows the last few launcher actions.\n\n" +
+            "Help → Check for Updates uses GitHub Releases.\n\n" +
             DeveloperCredit,
             LauncherName);
     }
@@ -1011,56 +982,14 @@ public partial class Form1 : Form
             }
 
             SaveControlsToConfig();
-            var result = ClientLauncher.Start(
+            ClientLauncher.Start(
                 ReadFormConfig(),
-                ClientLauncher.GetRepositoryToolsDirectory(),
-                report: AppendStatus);
-            if (result.SeededSafeGraphics)
-            {
-                AppendStatus("Seeded safe graphics registry values and UserPreferences.ini display settings.");
-            }
-
-            AppendStatus($"DDraw.dll resolves to: {result.ResolvedDDrawPath}");
-            if (!string.IsNullOrWhiteSpace(result.MulticlientDetail))
-            {
-                AppendStatus(result.MulticlientDetail);
-            }
-
-            AppendStatus($"Launched: client.exe {result.Arguments}");
+                ClientLauncher.GetRepositoryToolsDirectory());
         }
         catch (Exception ex)
         {
-            AppendStatus($"Launch failed: {ex.Message}");
             MessageBox.Show(this, ex.Message, LauncherName);
         }
-    }
-
-    private void ShowProfilesDialog()
-    {
-        using var dialog = new ProfilesForm(
-            ReadFormConfig,
-            ApplyFormConfig,
-            AppendStatus,
-            ClientLauncher.GetRepositoryToolsDirectory());
-        dialog.ShowDialog(this);
-    }
-
-    private void SaveCurrentAsProfile()
-    {
-        var config = ReadFormConfig();
-        if (string.IsNullOrWhiteSpace(config.TicketKey))
-        {
-            MessageBox.Show(this, "Account name is required before saving a profile.", LauncherName);
-            return;
-        }
-
-        var profile = ClientProfile.FromLaunchConfig(config);
-        ProfileStore.AddOrUpdate(profile);
-        AppendStatus($"Saved profile '{profile.DisplayName}'.");
-        MessageBox.Show(
-            this,
-            $"Saved profile '{profile.DisplayName}'.\n\nRoom → Client Profiles loads presets one at a time.",
-            LauncherName);
     }
 
     private LaunchConfig ReadFormConfig()
@@ -1077,18 +1006,6 @@ public partial class Form1 : Form
             SeedSafeGraphics = seedSafeGraphicsCheckBox.Checked,
             Skin = currentSkin,
         };
-    }
-
-    private void ApplyFormConfig(LaunchConfig config)
-    {
-        installPathTextBox.Text = config.InstallPath;
-        usernameTextBox.Text = config.TicketKey;
-        hostTextBox.Text = config.Host;
-        portNumeric.Value = Math.Clamp(config.Port, (int)portNumeric.Minimum, (int)portNumeric.Maximum);
-        passwordTextBox.Text = config.VArg;
-        zoneKeyTextBox.Text = config.ZArg;
-        useNoDisplayModeCheckBox.Checked = config.UseNoDisplayMode;
-        seedSafeGraphicsCheckBox.Checked = config.SeedSafeGraphics;
     }
 
     private void LaunchCompanionTool(string toolName, params string[] alternateNames)
@@ -1120,7 +1037,6 @@ public partial class Form1 : Form
             WorkingDirectory = installDirectory,
             UseShellExecute = true,
         });
-        AppendStatus($"Started {Path.GetFileName(toolPath)}");
     }
 
     private static string? FindFileCaseInsensitive(string directory, string primaryName, params string[] alternateNames)
@@ -1171,7 +1087,12 @@ public partial class Form1 : Form
             ApplyLauncherIniDefaults();
         }
 
-        AppendStatus($"Ready. Config: {GetConfigPath(installPathTextBox.Text.Trim())}");
+        ClientLauncher.RemoveLegacyProfileStore();
+        var installDirectory = GetInstallDirectory();
+        if (installDirectory is not null)
+        {
+            ClientLauncher.RemoveLegacyMulticlientFolder(installDirectory);
+        }
     }
 
     private void ApplyLauncherIniDefaults()
@@ -1193,11 +1114,6 @@ public partial class Form1 : Form
             dataCenter.ServerPort,
             (int)portNumeric.Minimum,
             (int)portNumeric.Maximum);
-
-        if (!string.IsNullOrWhiteSpace(dataCenter.Name))
-        {
-            AppendStatus($"Seeded defaults from launcher.ini datacenter '{dataCenter.Name}' ({dataCenter.ServerAddress}:{dataCenter.ServerPort}).");
-        }
     }
 
     private void SaveControlsToConfig()
@@ -1343,25 +1259,6 @@ public partial class Form1 : Form
         }
 
         return null;
-    }
-
-    private void AppendStatus(string message)
-    {
-        var line = $"[{DateTime.Now:HH:mm:ss}] {message}";
-        var lines = statusTextBox
-            .Lines
-            .Where(existing => !string.IsNullOrWhiteSpace(existing))
-            .ToList();
-
-        lines.Add(line);
-        while (lines.Count > 3)
-        {
-            lines.RemoveAt(0);
-        }
-
-        statusTextBox.Lines = lines.ToArray();
-        statusTextBox.SelectionStart = statusTextBox.TextLength;
-        statusTextBox.ScrollToCaret();
     }
 
     private static GraphicsPath CreateRoundedPath(Rectangle bounds, int radius)

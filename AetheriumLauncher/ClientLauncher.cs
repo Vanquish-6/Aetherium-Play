@@ -16,11 +16,13 @@ public sealed class ClientLaunchResult
 
     public string ResolvedDDrawPath { get; init; } = string.Empty;
 
-    public string MulticlientDetail { get; init; } = string.Empty;
+    public string LaunchDetail { get; init; } = string.Empty;
 }
 
 public static class ClientLauncher
 {
+    public const string LegacyMulticlientFolderName = "multiclient";
+
     public static ClientLaunchResult Start(
         LaunchConfig config,
         string? dgVoodooToolsDirectory = null,
@@ -42,6 +44,9 @@ public static class ClientLauncher
             throw new InvalidOperationException("Account name is required.");
         }
 
+        RemoveLegacyProfileStore(report);
+        RemoveLegacyMulticlientFolder(installDirectory, report);
+
         var seededSafeGraphics = false;
         string? graphicsDetail = null;
         var workingDirectory = installDirectory;
@@ -52,36 +57,22 @@ public static class ClientLauncher
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
 
-            var otherClientRunning = GetRunningClientDirectories().Count > 0;
-            if (otherClientRunning)
+            if (config.SeedSafeGraphics)
             {
-                GraphicsBootstrap.ApplyMulticlientWindowedSettings(
-                    workingDirectory,
-                    additionalClientDirectories: new[] { installDirectory });
-                graphicsDetail =
-                    "Another client is already running: windowed + CaptureMouse=false.";
+                GraphicsBootstrap.SeedSafeGraphicsSettings();
+                GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
+                seededSafeGraphics = true;
             }
-            else
-            {
-                if (config.SeedSafeGraphics)
-                {
-                    GraphicsBootstrap.SeedSafeGraphicsSettings();
-                    GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
-                    seededSafeGraphics = true;
-                }
 
-                GraphicsBootstrap.ApplySoloCaptureMouseSettings(
-                    workingDirectory,
-                    additionalClientDirectories: new[] { installDirectory });
-                graphicsDetail = "Solo display: CaptureMouse=true.";
-            }
+            GraphicsBootstrap.ApplySoloCaptureMouseSettings(workingDirectory);
+            graphicsDetail = "Solo display: CaptureMouse=true.";
         }
 
         var argumentParts = BuildArgumentParts(config);
         var arguments = BuildArgumentString(argumentParts);
 
-        // Suspend → patch Empyrean single-instance gate if stock → resume.
-        // DM client has no ASLR (ImageBase 0x400000), so the file offset maps cleanly.
+        // Suspend → optional vintage Decal inject → resume.
+        // Stock client single-instance behavior is left alone (no multiclient patch).
         var process = NativeProcess.StartSuspendedClient(
             clientPath,
             workingDirectory,
@@ -89,12 +80,9 @@ public static class ClientLauncher
             out var processHandle,
             out var threadHandle);
 
-        MulticlientGateResult gate;
         var vintageDecalDetail = string.Empty;
         try
         {
-            gate = MulticlientGate.EnsureAllowMulti(clientPath, processHandle);
-
             var vintageDecalPackage = VintageDecalInjector.FindEnabledPackage(installDirectory);
             if (vintageDecalPackage is not null)
             {
@@ -160,9 +148,9 @@ public static class ClientLauncher
             Process = process,
             SeededSafeGraphics = seededSafeGraphics,
             ResolvedDDrawPath = GraphicsBootstrap.DescribeResolvedDDrawDll(workingDirectory),
-            MulticlientDetail = string.Join(
+            LaunchDetail = string.Join(
                 " ",
-                new[] { gate.Detail, graphicsDetail, vintageDecalDetail }
+                new[] { graphicsDetail, vintageDecalDetail }
                     .Where(detail => !string.IsNullOrWhiteSpace(detail))),
         };
     }
@@ -258,42 +246,60 @@ public static class ClientLauncher
         return Path.Combine(AppContext.BaseDirectory, "dgvoodoo");
     }
 
-    public static IReadOnlyList<string> GetRunningClientDirectories()
+    /// <summary>
+    /// Older builds stored account presets in LocalAppData; remove them so they
+    /// cannot keep feeding alternate launch identities.
+    /// </summary>
+    public static void RemoveLegacyProfileStore(Action<string>? report = null)
     {
-        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var storePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AcLegacyLauncher",
+            "profiles.json");
+
         try
         {
-            foreach (var process in Process.GetProcessesByName("client"))
+            if (!File.Exists(storePath))
             {
-                try
-                {
-                    var path = process.MainModule?.FileName;
-                    if (string.IsNullOrWhiteSpace(path))
-                    {
-                        continue;
-                    }
-
-                    var directory = Path.GetDirectoryName(path);
-                    if (!string.IsNullOrWhiteSpace(directory))
-                    {
-                        directories.Add(Path.GetFullPath(directory));
-                    }
-                }
-                catch
-                {
-                    // 32-bit client from 64-bit launcher can deny MainModule access.
-                }
-                finally
-                {
-                    process.Dispose();
-                }
+                return;
             }
+
+            File.Delete(storePath);
+            report?.Invoke($"Removed legacy profile store: {storePath}");
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore process enumeration failures.
+            report?.Invoke($"Could not remove legacy profile store ({storePath}): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Older dual-client builds copied portal/cell DATs under multiclient\{account}.
+    /// Those private copies are the main reason players keep redoing DDD updates.
+    /// </summary>
+    public static void RemoveLegacyMulticlientFolder(string installDirectory, Action<string>? report = null)
+    {
+        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
+        {
+            return;
         }
 
-        return directories.ToList();
+        var multiclientRoot = Path.Combine(installDirectory, LegacyMulticlientFolderName);
+        if (!Directory.Exists(multiclientRoot))
+        {
+            return;
+        }
+
+        try
+        {
+            report?.Invoke($"Removing legacy multiclient folder: {multiclientRoot}");
+            Directory.Delete(multiclientRoot, recursive: true);
+            report?.Invoke("Removed legacy multiclient DAT workspaces.");
+        }
+        catch (Exception ex)
+        {
+            report?.Invoke(
+                $"Could not remove {multiclientRoot} (close any old client windows and retry): {ex.Message}");
+        }
     }
 }

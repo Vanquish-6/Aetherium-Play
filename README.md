@@ -50,7 +50,7 @@ x86 .NET Desktop runtime required by the launcher.
 
 Launcher features:
 
-- Account / password fields and saved account profiles (Room menu)
+- Account / password fields on the parchment form
 - Legacy launch switches (`-a`, `-h`, `-p`, optional `-v`, `-z`, `-nd`)
 - Seeds graphics registry values; buttons for `ACD3DSetup.exe` / `ACSET.EXE`
 - Default and PK skins

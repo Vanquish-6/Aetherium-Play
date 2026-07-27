@@ -99,90 +99,25 @@ internal static class GraphicsBootstrap
     }
 
     /// <summary>
-    /// Dual-client friendly display/input: windowed AC + dgVoodoo without mouse capture.
-    /// Two exclusive-fullscreen clients with CaptureMouse=true commonly eat keyboard focus.
-    /// Applies to the launch folder and any other known AC client folders (main + admin, etc.).
-    /// </summary>
-    internal static void ApplyMulticlientWindowedSettings(
-        string workingDirectory,
-        IEnumerable<string>? additionalClientDirectories = null)
-    {
-        using (var key = Registry.CurrentUser.CreateSubKey(RegistrySubKey, writable: true)
-            ?? throw new InvalidOperationException("Could not open the AC registry key."))
-        {
-            key.SetValue("UseHardware", 1, RegistryValueKind.DWord);
-            key.SetValue("DoubleBuffer", 2, RegistryValueKind.DWord);
-            key.SetValue("FullScreen", 0, RegistryValueKind.DWord);
-            key.SetValue("ZBuffer2", 0, RegistryValueKind.DWord);
-            // Do not force ScreenWidth/Height — shared with EOR.
-        }
-
-        SeedUserPreferencesDisplay(fullScreen: false);
-
-        foreach (var directory in CollectDirectories(workingDirectory, additionalClientDirectories))
-        {
-            ApplyMulticlientDgVoodooConfig(directory);
-        }
-    }
-
-    /// <summary>
     /// Solo play: restore dgVoodoo's normal captured-mouse behavior.
-    /// Older builds forced the dual-client flags into solo workspaces.
+    /// Older builds forced dual-client CaptureMouse=false flags into client folders.
     /// </summary>
-    internal static void ApplySoloCaptureMouseSettings(
-        string workingDirectory,
-        IEnumerable<string>? additionalClientDirectories = null)
+    internal static void ApplySoloCaptureMouseSettings(string workingDirectory)
     {
-        foreach (var directory in CollectDirectories(workingDirectory, additionalClientDirectories))
-        {
-            ApplyDgVoodooFlags(
-                directory,
-                captureMouse: true,
-                fullScreenMode: null,
-                freeMouse: false,
-                centerAppWindow: null);
-        }
+        ApplyDgVoodooFlags(
+            workingDirectory,
+            captureMouse: true,
+            fullScreenMode: null,
+            freeMouse: false,
+            centerAppWindow: null);
     }
 
     /// <summary>
-    /// Legacy helper — prefer <see cref="ApplySoloCaptureMouseSettings"/> for solo play.
+    /// Legacy helper — prefer <see cref="ApplySoloCaptureMouseSettings"/>.
     /// </summary>
     internal static void ApplyInputFriendlyDgVoodooConfig(string workingDirectory)
     {
         ApplySoloCaptureMouseSettings(workingDirectory);
-    }
-
-    internal static void ApplyMulticlientDgVoodooConfig(string workingDirectory)
-    {
-        ApplyDgVoodooFlags(
-            workingDirectory,
-            captureMouse: false,
-            fullScreenMode: false,
-            freeMouse: true,
-            centerAppWindow: false);
-    }
-
-    private static IEnumerable<string> CollectDirectories(
-        string workingDirectory,
-        IEnumerable<string>? additionalClientDirectories)
-    {
-        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            workingDirectory,
-        };
-
-        if (additionalClientDirectories is not null)
-        {
-            foreach (var directory in additionalClientDirectories)
-            {
-                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
-                {
-                    directories.Add(directory);
-                }
-            }
-        }
-
-        return directories;
     }
 
     private static void ApplyDgVoodooFlags(
