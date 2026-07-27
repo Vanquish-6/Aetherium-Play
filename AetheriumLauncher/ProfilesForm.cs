@@ -1,7 +1,7 @@
 namespace AcLegacyLauncher;
 
 /// <summary>
-/// Separate dialog for multi-account profiles. Keeps the Zone parchment form unchanged.
+/// Separate dialog for saved account presets. Keeps the Zone parchment form unchanged.
 /// </summary>
 public sealed class ProfilesForm : Form
 {
@@ -96,7 +96,7 @@ public sealed class ProfilesForm : Form
         portNumeric.Maximum = 65535;
         portNumeric.Value = 9000;
         useNoDisplayModeCheckBox.Text = "No display mode (-nd)";
-        seedSafeGraphicsCheckBox.Text = "Safe graphics (shared registry — avoid for multi)";
+        seedSafeGraphicsCheckBox.Text = "Safe graphics (shared registry)";
 
         AddEditorRow(panel, "Name", nameTextBox);
         AddEditorRow(panel, "Account", accountTextBox);
@@ -150,8 +150,7 @@ public sealed class ProfilesForm : Form
         bar.Controls.Add(MakeButton("New from Form", AddFromCurrentForm));
         bar.Controls.Add(MakeButton("Load into Form", LoadIntoMainForm));
         bar.Controls.Add(MakeButton("Delete", DeleteSelected));
-        bar.Controls.Add(MakeButton("Launch Selected", LaunchSelected));
-        bar.Controls.Add(MakeButton("Launch All", LaunchAll));
+        bar.Controls.Add(MakeButton("Launch", LaunchSelected));
         bar.Controls.Add(MakeButton("Close", (_, _) => Close()));
 
         statusLabel.AutoSize = true;
@@ -347,85 +346,36 @@ public sealed class ProfilesForm : Form
 
     private void LaunchSelected(object? sender, EventArgs e)
     {
-        LaunchProfiles(GetSelectedProfiles());
-    }
-
-    private void LaunchAll(object? sender, EventArgs e)
-    {
-        LaunchProfiles(store.Profiles.ToList());
-    }
-
-    private void LaunchProfiles(IReadOnlyList<ClientProfile> profiles)
-    {
-        if (profiles.Count == 0)
+        var profile = GetSingleSelectedProfile();
+        if (profile is null)
         {
-            MessageBox.Show(this, "No profiles to launch.", Text);
+            MessageBox.Show(this, "Select one profile to launch.", Text);
             return;
         }
-
-        var launched = 0;
-        var failures = new List<string>();
-        var prepareGraphics = true;
-        string? multiclientDetail = null;
-        string? instanceDetail = null;
 
         UseWaitCursor = true;
         try
         {
-            foreach (var profile in profiles)
+            var result = ClientLauncher.Start(
+                profile.ToLaunchConfig(),
+                dgVoodooToolsDirectory,
+                report: reportStatus);
+            if (!string.IsNullOrWhiteSpace(result.MulticlientDetail))
             {
-                try
-                {
-                    var install = ClientLauncher.ResolveInstallDirectory(profile.InstallPath)
-                        ?? profile.InstallPath;
-                    var result = ClientLauncher.Start(
-                        profile.ToLaunchConfig(),
-                        dgVoodooToolsDirectory,
-                        prepareGraphics: prepareGraphics,
-                        instanceKey: profile.Id,
-                        forcePrivateDatInstance: ClientLauncher.RequiresPrivateDatInstance(install, profiles),
-                        report: reportStatus);
-
-                    prepareGraphics = false;
-                    multiclientDetail ??= result.MulticlientDetail;
-                    instanceDetail ??= result.InstanceDetail;
-                    launched++;
-                    reportStatus($"Launched profile '{profile.DisplayName}' from {result.WorkingDirectory}");
-
-                    if (launched < profiles.Count)
-                    {
-                        Thread.Sleep(750);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"{profile.DisplayName}: {ex.Message}");
-                }
+                reportStatus(result.MulticlientDetail);
             }
+
+            reportStatus($"Launched profile '{profile.DisplayName}' from {result.WorkingDirectory}");
+            SetStatus($"Launched '{profile.DisplayName}'.");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Launch failed: {ex.Message}");
+            MessageBox.Show(this, ex.Message, Text);
         }
         finally
         {
             UseWaitCursor = false;
-        }
-
-        SetStatus($"Launched {launched}/{profiles.Count}.");
-        if (failures.Count > 0)
-        {
-            MessageBox.Show(
-                this,
-                "Some launches failed:\n" + string.Join("\n", failures),
-                Text);
-        }
-        else if (profiles.Count > 1)
-        {
-            MessageBox.Show(
-                this,
-                $"Started {launched} client process(es).\n\n" +
-                "Private DAT folders: <install>\\multiclient\\...\n" +
-                (multiclientDetail ?? "") + "\n" + (instanceDetail ?? ""),
-                Text,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
         }
     }
 

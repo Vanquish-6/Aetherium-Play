@@ -88,39 +88,4 @@ public static class ProfileStore
 
         return removed;
     }
-
-    /// <summary>
-    /// True when saved profiles point at more than one distinct client install
-    /// (e.g. main + admin folders).
-    /// </summary>
-    public static bool HasMultipleInstallRoots()
-    {
-        return GetDistinctInstallDirectories().Count > 1;
-    }
-
-    public static IReadOnlyList<string> GetDistinctInstallDirectories()
-    {
-        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var profile in Load().Profiles)
-        {
-            var resolved = ClientLauncher.ResolveInstallDirectory(profile.InstallPath);
-            if (!string.IsNullOrWhiteSpace(resolved))
-            {
-                roots.Add(Path.GetFullPath(resolved));
-            }
-        }
-
-        return roots.ToList();
-    }
-
-    public static int CountProfilesForInstall(string installDirectory)
-    {
-        var target = Path.GetFullPath(installDirectory);
-        return Load().Profiles.Count(profile =>
-        {
-            var resolved = ClientLauncher.ResolveInstallDirectory(profile.InstallPath);
-            return !string.IsNullOrWhiteSpace(resolved)
-                && Path.GetFullPath(resolved).Equals(target, StringComparison.OrdinalIgnoreCase);
-        });
-    }
 }

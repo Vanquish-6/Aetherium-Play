@@ -308,7 +308,6 @@ static class Program
                 StartedAt = DateTimeOffset.Now,
                 result.WorkingDirectory,
                 result.MulticlientDetail,
-                result.InstanceDetail,
             });
             return 0;
         }

@@ -1,7 +1,7 @@
 namespace AcLegacyLauncher;
 
 /// <summary>
-/// One saved account/launch identity for multi-client use.
+/// One saved account/launch preset.
 /// The main parchment form stays independent; profiles live in profiles.json.
 /// </summary>
 public sealed class ClientProfile

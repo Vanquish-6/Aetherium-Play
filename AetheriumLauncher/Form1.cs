@@ -395,7 +395,6 @@ public partial class Form1 : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Save as Profile...", null, (_, _) => SaveCurrentAsProfile());
         menu.Items.Add("Client Profiles...", null, (_, _) => ShowProfilesDialog());
-        menu.Items.Add("Launch All Profiles", null, (_, _) => LaunchAllProfiles());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Close());
         return menu;
@@ -943,13 +942,10 @@ public partial class Form1 : Form
         MessageBox.Show(
             this,
             $"{LauncherName} v{UpdateChecker.CurrentVersion}\n\n" +
-            "Room lets you browse the client folder, manage multi-account profiles, or exit.\n" +
+            "Room lets you browse the client folder, manage saved profiles, or exit.\n" +
             "Zone and the purple PLAY button both launch client.exe with the parchment settings.\n" +
-            "Profiles (Room → Client Profiles / Launch All Profiles) can start dual clients.\n" +
-            "Same-folder dual uses private portal/cell copies; different folders (main vs admin) launch from each install.\n" +
-            "Each account uses a private portal.dat/cell.dat under multiclient\\<account>.\n" +
-            "Solo keeps normal mouse capture; dual-client turns it off only when needed.\n" +
-            "Private folders retain Default.map so keyboard bindings work in game.\n" +
+            "Profiles (Room → Client Profiles) store account presets you can load one at a time.\n" +
+            "The client always launches from your install folder so DAT updates stay in one place.\n" +
             "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
             "Tools exposes Open Folder, ACD3DSetup, and ACSET.\n" +
             "Help → Check for Updates uses GitHub Releases.\n" +
@@ -1030,11 +1026,6 @@ public partial class Form1 : Form
                 AppendStatus(result.MulticlientDetail);
             }
 
-            if (!string.IsNullOrWhiteSpace(result.InstanceDetail))
-            {
-                AppendStatus(result.InstanceDetail);
-            }
-
             AppendStatus($"Launched: client.exe {result.Arguments}");
         }
         catch (Exception ex)
@@ -1066,95 +1057,10 @@ public partial class Form1 : Form
         var profile = ClientProfile.FromLaunchConfig(config);
         ProfileStore.AddOrUpdate(profile);
         AppendStatus($"Saved profile '{profile.DisplayName}'.");
-        MessageBox.Show(this, $"Saved profile '{profile.DisplayName}'.\n\nRoom → Client Profiles manages accounts for multi-launch.", LauncherName);
-    }
-
-    private void LaunchAllProfiles()
-    {
-        var profiles = ProfileStore.Load().Profiles;
-        if (profiles.Count == 0)
-        {
-            MessageBox.Show(
-                this,
-                "No profiles yet.\n\nUse Room → Save as Profile, or Client Profiles → New from Form.",
-                LauncherName);
-            return;
-        }
-
-        var launched = 0;
-        var failures = new List<string>();
-        var prepareGraphics = true;
-        string? multiclientDetail = null;
-        string? instanceDetail = null;
-
-        Cursor = Cursors.WaitCursor;
-        try
-        {
-            foreach (var profile in profiles)
-            {
-                try
-                {
-                    var result = ClientLauncher.Start(
-                        profile.ToLaunchConfig(),
-                        ClientLauncher.GetRepositoryToolsDirectory(),
-                        prepareGraphics: prepareGraphics,
-                        instanceKey: profile.Id,
-                        forcePrivateDatInstance: ClientLauncher.RequiresPrivateDatInstance(
-                            ClientLauncher.ResolveInstallDirectory(profile.InstallPath) ?? profile.InstallPath,
-                            profiles),
-                        report: AppendStatus);
-                    prepareGraphics = false;
-                    multiclientDetail ??= result.MulticlientDetail;
-                    instanceDetail ??= result.InstanceDetail;
-                    launched++;
-                    AppendStatus($"Launched profile '{profile.DisplayName}' from {result.WorkingDirectory}");
-
-                    // Brief stagger so portal.dat/cell.dat opens don't race.
-                    if (launched < profiles.Count)
-                    {
-                        Thread.Sleep(750);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"{profile.DisplayName}: {ex.Message}");
-                }
-            }
-        }
-        finally
-        {
-            Cursor = Cursors.Default;
-        }
-
-        if (!string.IsNullOrWhiteSpace(multiclientDetail))
-        {
-            AppendStatus(multiclientDetail);
-        }
-
-        if (!string.IsNullOrWhiteSpace(instanceDetail))
-        {
-            AppendStatus(instanceDetail);
-        }
-
-        if (failures.Count > 0)
-        {
-            MessageBox.Show(
-                this,
-                $"Launched {launched}/{profiles.Count}.\n\n" + string.Join("\n", failures),
-                LauncherName);
-            return;
-        }
-
-        if (profiles.Count > 1)
-        {
-            MessageBox.Show(
-                this,
-                $"Started {launched} client process(es).\n\n" +
-                "Each account uses a private portal.dat/cell.dat under:\n" +
-                @"  <install>\multiclient\<profile>\ " + "\n\n" +
-                (multiclientDetail ?? "") + "\n" + (instanceDetail ?? ""),
-                LauncherName);
-        }
+        MessageBox.Show(
+            this,
+            $"Saved profile '{profile.DisplayName}'.\n\nRoom → Client Profiles loads presets one at a time.",
+            LauncherName);
     }
 
     private LaunchConfig ReadFormConfig()

@@ -17,8 +17,6 @@ public sealed class ClientLaunchResult
     public string ResolvedDDrawPath { get; init; } = string.Empty;
 
     public string MulticlientDetail { get; init; } = string.Empty;
-
-    public string InstanceDetail { get; init; } = string.Empty;
 }
 
 public static class ClientLauncher
@@ -27,18 +25,16 @@ public static class ClientLauncher
         LaunchConfig config,
         string? dgVoodooToolsDirectory = null,
         bool prepareGraphics = true,
-        string? instanceKey = null,
-        bool forcePrivateDatInstance = false,
         Action<string>? report = null)
     {
         var installDirectory = ResolveInstallDirectory(config.InstallPath)
             ?? throw new InvalidOperationException(
                 "Install folder must point to a directory containing client.exe.");
 
-        var primaryClientPath = Path.Combine(installDirectory, "client.exe");
-        if (!File.Exists(primaryClientPath))
+        var clientPath = Path.Combine(installDirectory, "client.exe");
+        if (!File.Exists(clientPath))
         {
-            throw new FileNotFoundException($"Missing client.exe in {installDirectory}", primaryClientPath);
+            throw new FileNotFoundException($"Missing client.exe in {installDirectory}", clientPath);
         }
 
         if (string.IsNullOrWhiteSpace(config.TicketKey))
@@ -48,66 +44,25 @@ public static class ClientLauncher
 
         var seededSafeGraphics = false;
         string? graphicsDetail = null;
+        var workingDirectory = installDirectory;
 
         if (prepareGraphics)
         {
             GraphicsBootstrap.EnsureDirectDrawWrapper(
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
-        }
 
-        var runningClientDirectories = GetRunningClientDirectories();
-        var otherClientRunning = runningClientDirectories.Count > 0;
-
-        var instanceId = string.IsNullOrWhiteSpace(instanceKey) ? config.TicketKey : instanceKey;
-
-        // Always use a stable per-account DAT workspace so DDD progress sticks.
-        var usePrivateInstance = !string.IsNullOrWhiteSpace(instanceId);
-
-        // Display mode must NOT follow private DAT folders. Only strip mouse
-        // capture when another client is actually running or Launch All.
-        var useDualClientDisplay = otherClientRunning
-            || forcePrivateDatInstance;
-
-        string workingDirectory;
-        string clientPath;
-        var instanceDetail = "Using primary install folder.";
-
-        if (usePrivateInstance)
-        {
-            var prepared = ClientInstanceWorkspace.Ensure(installDirectory, instanceId!, report);
-            workingDirectory = prepared.WorkingDirectory;
-            clientPath = prepared.ClientExePath;
-            instanceDetail = prepared.Detail;
-
-            if (prepareGraphics)
+            var otherClientRunning = GetRunningClientDirectories().Count > 0;
+            if (otherClientRunning)
             {
-                GraphicsBootstrap.EnsureDirectDrawWrapper(
+                GraphicsBootstrap.ApplyMulticlientWindowedSettings(
                     workingDirectory,
-                    dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
-            }
-        }
-        else
-        {
-            workingDirectory = installDirectory;
-            clientPath = primaryClientPath;
-        }
-
-        if (prepareGraphics)
-        {
-            if (useDualClientDisplay)
-            {
-                var extraDirs = ProfileStore.GetDistinctInstallDirectories()
-                    .Concat(runningClientDirectories)
-                    .Append(installDirectory);
-                GraphicsBootstrap.ApplyMulticlientWindowedSettings(workingDirectory, extraDirs);
+                    additionalClientDirectories: new[] { installDirectory });
                 graphicsDetail =
-                    "Dual-client display: windowed + CaptureMouse=false on all known client folders.";
+                    "Another client is already running: windowed + CaptureMouse=false.";
             }
             else
             {
-                // Heal CaptureMouse=false left behind by older builds that treated every
-                // multiclient\{account} launch as dual-client.
                 if (config.SeedSafeGraphics)
                 {
                     GraphicsBootstrap.SeedSafeGraphicsSettings();
@@ -118,8 +73,7 @@ public static class ClientLauncher
                 GraphicsBootstrap.ApplySoloCaptureMouseSettings(
                     workingDirectory,
                     additionalClientDirectories: new[] { installDirectory });
-                graphicsDetail =
-                    "Solo display: CaptureMouse=true.";
+                graphicsDetail = "Solo display: CaptureMouse=true.";
             }
         }
 
@@ -128,7 +82,6 @@ public static class ClientLauncher
 
         // Suspend → patch Empyrean single-instance gate if stock → resume.
         // DM client has no ASLR (ImageBase 0x400000), so the file offset maps cleanly.
-        // Patch against the on-disk image we execute (hardlink shares bytes with primary).
         var process = NativeProcess.StartSuspendedClient(
             clientPath,
             workingDirectory,
@@ -211,7 +164,6 @@ public static class ClientLauncher
                 " ",
                 new[] { gate.Detail, graphicsDetail, vintageDecalDetail }
                     .Where(detail => !string.IsNullOrWhiteSpace(detail))),
-            InstanceDetail = instanceDetail,
         };
     }
 
@@ -343,41 +295,5 @@ public static class ClientLauncher
         }
 
         return directories.ToList();
-    }
-
-    public static bool IsSameInstallTree(string clientDirectory, string installDirectory)
-    {
-        var client = Path.GetFullPath(clientDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var install = Path.GetFullPath(installDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        if (client.Equals(install, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var multiclientRoot = Path.Combine(install, ClientInstanceWorkspace.RootFolderName);
-        return client.StartsWith(multiclientRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            || client.Equals(multiclientRoot, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Private DAT folders are only required when two launches share one install tree.
-    /// </summary>
-    public static bool RequiresPrivateDatInstance(string installDirectory, IEnumerable<ClientProfile> batchProfiles)
-    {
-        var target = Path.GetFullPath(installDirectory);
-        var sharing = batchProfiles.Count(profile =>
-        {
-            var resolved = ResolveInstallDirectory(profile.InstallPath);
-            return !string.IsNullOrWhiteSpace(resolved)
-                && Path.GetFullPath(resolved).Equals(target, StringComparison.OrdinalIgnoreCase);
-        });
-
-        return sharing > 1 || IsSameInstallTreeRunning(installDirectory);
-    }
-
-    private static bool IsSameInstallTreeRunning(string installDirectory)
-    {
-        return GetRunningClientDirectories().Any(directory => IsSameInstallTree(directory, installDirectory));
     }
 }

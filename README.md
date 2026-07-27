@@ -50,8 +50,7 @@ x86 .NET Desktop runtime required by the launcher.
 
 Launcher features:
 
-- Account / password fields and multi-account profiles (Room menu)
-- Dual-client for DM-era `client.exe` (mutex gate + DAT isolation under `multiclient\`)
+- Account / password fields and saved account profiles (Room menu)
 - Legacy launch switches (`-a`, `-h`, `-p`, optional `-v`, `-z`, `-nd`)
 - Seeds graphics registry values; buttons for `ACD3DSetup.exe` / `ACSET.EXE`
 - Default and PK skins
