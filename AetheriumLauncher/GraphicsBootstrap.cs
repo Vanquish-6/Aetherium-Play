@@ -109,7 +109,9 @@ internal static class GraphicsBootstrap
             captureMouse: true,
             fullScreenMode: null,
             freeMouse: false,
-            centerAppWindow: null);
+            centerAppWindow: null,
+            appControlledScreenMode: false,
+            disableAltEnterToToggleScreenMode: false);
     }
 
     /// <summary>
@@ -125,7 +127,9 @@ internal static class GraphicsBootstrap
         bool? captureMouse,
         bool? fullScreenMode,
         bool? freeMouse,
-        bool? centerAppWindow)
+        bool? centerAppWindow,
+        bool? appControlledScreenMode,
+        bool? disableAltEnterToToggleScreenMode)
     {
         var configPath = Path.Combine(workingDirectory, "DgVoodoo.conf");
         if (!File.Exists(configPath))
@@ -165,6 +169,24 @@ internal static class GraphicsBootstrap
                      line.StartsWith("CenterAppWindow", StringComparison.OrdinalIgnoreCase))
             {
                 updated = SetConfigFlag(line, "CenterAppWindow", centerAppWindow.Value);
+            }
+            else if (appControlledScreenMode is not null &&
+                     line.StartsWith("AppControlledScreenMode", StringComparison.OrdinalIgnoreCase))
+            {
+                updated = SetConfigFlag(
+                    line,
+                    "AppControlledScreenMode",
+                    appControlledScreenMode.Value);
+            }
+            else if (disableAltEnterToToggleScreenMode is not null &&
+                     line.StartsWith(
+                         "DisableAltEnterToToggleScreenMode",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                updated = SetConfigFlag(
+                    line,
+                    "DisableAltEnterToToggleScreenMode",
+                    disableAltEnterToToggleScreenMode.Value);
             }
 
             if (updated is null || updated == line)

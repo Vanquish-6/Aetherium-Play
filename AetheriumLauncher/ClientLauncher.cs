@@ -65,7 +65,7 @@ public static class ClientLauncher
             }
 
             GraphicsBootstrap.ApplySoloCaptureMouseSettings(workingDirectory);
-            graphicsDetail = "Solo display: CaptureMouse=true.";
+            graphicsDetail = "Solo display: CaptureMouse=true; Alt+Enter enabled.";
         }
 
         var argumentParts = BuildArgumentParts(config);
