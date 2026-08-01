@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using AcLegacyLauncher;
 
@@ -350,6 +351,21 @@ if (args is ["--scan-active"])
         $"PASS: active-program identity scans completed locally in {string.Join(", ", timings)} ms.");
 }
 
+if (args is ["--trigger-live-integrity-canary", var canaryProcessIdText])
+{
+    True(
+        int.TryParse(canaryProcessIdText, out var canaryProcessId) && canaryProcessId > 0,
+        "live integrity canary process id");
+    using var canaryProcess = Process.GetProcessById(canaryProcessId);
+    RemoteMemoryTest.TriggerLiveIntegrityCanary(canaryProcess);
+
+    True(
+        canaryProcess.WaitForExit(ClientAntiTamper.ScanIntervalMilliseconds + 8_000),
+        "launcher monitor terminated the live DDD canary client");
+    Console.WriteLine(
+        $"PASS: live A09 integrity canary ended hash-verified client PID {canaryProcessId}.");
+}
+
 if (args is ["--prepare-release-client", var releaseClientDirectory])
 {
     var fullDirectory = Path.GetFullPath(releaseClientDirectory);
@@ -460,22 +476,19 @@ if (args is [var integrationMode, var clientPath] &&
 
         integrationGuard.VerifyNow();
 
-        var marker = installation.Regions.Single(region =>
-            region.Label.Contains("version marker", StringComparison.Ordinal));
-        RemoteMemoryTest.WriteByte(
-            process.Handle,
-            marker.Address,
-            (byte)(marker.ExpectedBytes[0] ^ 0xFF));
+        var liveCanaryRegion = installation.Regions.Single(region =>
+            region.Label.Contains("UseTime", StringComparison.Ordinal));
+        RemoteMemoryTest.TriggerLiveIntegrityCanary(process);
         True(
             violationSeen.Wait(ClientAntiTamper.ScanIntervalMilliseconds + 8_000),
-            "resident monitor reported the real marker mutation");
+            "resident monitor reported the live-canary detour mutation");
         True(
-            observedViolation?.Contains(marker.Label, StringComparison.Ordinal) == true,
-            "resident monitor identified the mutated marker region");
+            observedViolation?.Contains(liveCanaryRegion.Label, StringComparison.Ordinal) == true,
+            "resident monitor identified the live-canary detour region");
         True(
             process.WaitForExit(ClientAntiTamper.ScanIntervalMilliseconds + 8_000),
             $"resident monitor terminated a {(resumeClient ? "resumed" : "suspended")} " +
-            "client after a real marker mutation");
+            "client after the live-canary detour mutation");
 
         Console.WriteLine(
             $"PASS: installed the transactional runtime patch, detected real mutations in all " +
@@ -761,6 +774,15 @@ internal static class RemoteMemoryTest
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadProcessMemory(
+        IntPtr process,
+        IntPtr address,
+        byte[] buffer,
+        nuint size,
+        out nuint bytesRead);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool WriteProcessMemory(
         IntPtr process,
         IntPtr address,
@@ -818,6 +840,73 @@ internal static class RemoteMemoryTest
                 throw Failure("VirtualProtectEx failed after test mutation");
             }
         }
+    }
+
+    internal static void TriggerLiveIntegrityCanary(Process process)
+    {
+        var processHandle = process.Handle;
+        var imagePath = Path.GetFullPath(QueryImagePath(processHandle));
+        var image = new FileInfo(imagePath);
+        if (!image.Name.Equals("client.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Live integrity canary refused non-client executable {image.Name}.");
+        }
+
+        if (image.Length != CommunityClientBootstrap.ExpectedSize)
+        {
+            throw new InvalidDataException(
+                $"Live integrity canary client size is {image.Length}; expected " +
+                $"{CommunityClientBootstrap.ExpectedSize}.");
+        }
+
+        using (var imageStream = image.OpenRead())
+        {
+            var actualHash = Convert.ToHexString(SHA256.HashData(imageStream));
+            if (!actualHash.Equals(
+                    CommunityClientBootstrap.ExpectedSha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    $"Live integrity canary client SHA-256 is {actualHash}; expected " +
+                    CommunityClientBootstrap.ExpectedSha256 + ".");
+            }
+        }
+
+        var capabilityAddress = new IntPtr(unchecked((int)(
+            NativeClientDddAcceleration.PreferredImageBase +
+            NativeClientDddAcceleration.VersionLiteralRva)));
+        var expectedCapability = NativeClientDddAcceleration.CapabilityVersionForTest();
+        if (!ReadBytes(processHandle, capabilityAddress, expectedCapability.Length)
+                .SequenceEqual(expectedCapability))
+        {
+            throw new InvalidDataException(
+                "Live integrity canary refused a client without the exact A09 marker.");
+        }
+
+        var useTimeAddress = new IntPtr(unchecked((int)(
+            NativeClientDddAcceleration.PreferredImageBase +
+            NativeClientDddAcceleration.UseTimeRva)));
+        var useTimePatch = ReadBytes(processHandle, useTimeAddress, 6);
+        if (useTimePatch[0] != 0xE9 || useTimePatch[5] != 0x90)
+        {
+            throw new InvalidDataException(
+                "Live integrity canary refused a client without the expected A09 UseTime detour.");
+        }
+
+        WriteByte(processHandle, useTimeAddress, 0x90);
+    }
+
+    internal static byte[] ReadBytes(IntPtr process, IntPtr address, int length)
+    {
+        var bytes = new byte[length];
+        if (!ReadProcessMemory(process, address, bytes, (nuint)length, out var read) ||
+            read != (nuint)length)
+        {
+            throw Failure("ReadProcessMemory failed for canary verification");
+        }
+
+        return bytes;
     }
 
     internal static void TerminateCurrentProcessImmediately()
