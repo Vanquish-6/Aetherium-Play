@@ -95,33 +95,50 @@ internal static class NativeProcess
         }
         catch
         {
+            try
+            {
+                _ = TerminateProcess(processInfo.hProcess, 1);
+            }
+            catch
+            {
+                // Preserve the original Process.GetProcessById failure.
+            }
+
             CloseHandle(threadHandle);
             CloseHandle(processHandle);
             throw;
         }
     }
 
-    public static void ResumeAndClose(IntPtr processHandle, IntPtr threadHandle)
+    public static void ResumeAndClose(ref IntPtr processHandle, ref IntPtr threadHandle)
     {
+        // Transfer ownership before any fallible operation. Callers must not
+        // retain stale numeric handles if ResumeThread fails and this method's
+        // finally block closes them.
+        var ownedProcessHandle = processHandle;
+        var ownedThreadHandle = threadHandle;
+        processHandle = IntPtr.Zero;
+        threadHandle = IntPtr.Zero;
+
         try
         {
-            if (ResumeThread(threadHandle) == unchecked((uint)-1))
+            if (ResumeThread(ownedThreadHandle) == unchecked((uint)-1))
             {
                 var error = Marshal.GetLastWin32Error();
-                TerminateProcess(processHandle, 1);
+                TerminateProcess(ownedProcessHandle, 1);
                 throw new InvalidOperationException($"ResumeThread failed (Win32 {error}).");
             }
         }
         finally
         {
-            if (threadHandle != IntPtr.Zero)
+            if (ownedThreadHandle != IntPtr.Zero)
             {
-                CloseHandle(threadHandle);
+                CloseHandle(ownedThreadHandle);
             }
 
-            if (processHandle != IntPtr.Zero)
+            if (ownedProcessHandle != IntPtr.Zero)
             {
-                CloseHandle(processHandle);
+                CloseHandle(ownedProcessHandle);
             }
         }
     }

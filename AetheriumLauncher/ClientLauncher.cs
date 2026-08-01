@@ -17,6 +17,8 @@ public sealed class ClientLaunchResult
     public string ResolvedDDrawPath { get; init; } = string.Empty;
 
     public string LaunchDetail { get; init; } = string.Empty;
+
+    internal ClientAntiTamperRuntimeGuard? AntiTamperGuard { get; init; }
 }
 
 public static class ClientLauncher
@@ -43,6 +45,10 @@ public static class ClientLauncher
         {
             throw new InvalidOperationException("Account name is required.");
         }
+
+        // This local-only check happens before profile cleanup, graphics setup,
+        // or process creation so a refused launch leaves the game untouched.
+        ClientAntiTamper.EnsureNoKnownMemoryEditorRunning();
 
         RemoveLegacyProfileStore(report);
         RemoveLegacyMulticlientFolder(installDirectory, report);
@@ -80,9 +86,27 @@ public static class ClientLauncher
             out var processHandle,
             out var threadHandle);
 
+        NativeClientDddAccelerationInstallation? dddAcceleration = null;
+        ClientAntiTamperContainment? containment = null;
+        ClientAntiTamperRuntimeGuard? antiTamper = null;
+        var dddAccelerationDetail = string.Empty;
+        var antiTamperDetail = string.Empty;
         var vintageDecalDetail = string.Empty;
         try
         {
+            // Contain the suspended stock client before any A09 marker, hook, or
+            // optional injection is written. If the launcher ends at any later
+            // point, Windows cannot leave a patched orphan to be resumed.
+            containment = ClientAntiTamper.CreateRuntimeContainment(processHandle);
+
+            // Install the exact-client runtime hook before any injected DLL can
+            // alter the image and before the primary thread executes client code.
+            dddAcceleration = NativeClientDddAcceleration.Apply(
+                clientPath,
+                processHandle);
+            dddAccelerationDetail = dddAcceleration.Detail;
+            report?.Invoke(dddAccelerationDetail);
+
             var vintageDecalPackage = VintageDecalInjector.FindEnabledPackage(installDirectory);
             if (vintageDecalPackage is not null)
             {
@@ -94,12 +118,44 @@ public static class ClientLauncher
                 vintageDecalDetail = "Injected vintage Decal 2.6.1.1 before client resume.";
             }
 
-            NativeProcess.ResumeAndClose(processHandle, threadHandle);
-            processHandle = IntPtr.Zero;
-            threadHandle = IntPtr.Zero;
+            // Optional DLL injection must leave all four guarded A09 regions
+            // intact. Any collision is refused while the client is suspended.
+            NativeClientDddAcceleration.VerifyInstalled(
+                processHandle,
+                dddAcceleration);
+
+            // Close the race between the initial scan and process setup. A hit
+            // here follows the existing fail-closed path and terminates only the
+            // still-suspended client launched above.
+            ClientAntiTamper.EnsureNoKnownMemoryEditorRunning();
+
+            // Start the independent launcher-resident guard while the primary
+            // client thread is still suspended, so no admitted A09 client ever
+            // runs without an active integrity monitor.
+            antiTamper = ClientAntiTamper.StartRuntimeMonitor(
+                process,
+                dddAcceleration,
+                containment);
+            antiTamperDetail = antiTamper.Detail;
+            report?.Invoke(antiTamperDetail);
+
+            NativeProcess.ResumeAndClose(ref processHandle, ref threadHandle);
+
+            // Close the first-interval race with a synchronous post-resume scan;
+            // the resident thread then continues scan-before-wait every two seconds.
+            antiTamper.VerifyNow();
         }
         catch
         {
+            if (antiTamper is not null)
+            {
+                antiTamper.Dispose();
+            }
+            else
+            {
+                containment?.Dispose();
+            }
+
             if (threadHandle != IntPtr.Zero || processHandle != IntPtr.Zero)
             {
                 try
@@ -146,11 +202,18 @@ public static class ClientLauncher
             WorkingDirectory = workingDirectory,
             Arguments = arguments,
             Process = process,
+            AntiTamperGuard = antiTamper,
             SeededSafeGraphics = seededSafeGraphics,
             ResolvedDDrawPath = GraphicsBootstrap.DescribeResolvedDDrawDll(workingDirectory),
             LaunchDetail = string.Join(
                 " ",
-                new[] { graphicsDetail, vintageDecalDetail }
+                new[]
+                {
+                    graphicsDetail,
+                    dddAccelerationDetail,
+                    antiTamperDetail,
+                    vintageDecalDetail,
+                }
                     .Where(detail => !string.IsNullOrWhiteSpace(detail))),
         };
     }

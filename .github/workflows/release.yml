@@ -1,15 +1,15 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version tag to build (e.g. v1.0.8). Leave empty to use version.txt."
+        description: "Existing tag to build (e.g. v1.0.24). Leave empty to build the current ref and use version.txt."
         required: false
         default: ""
+      ddd_canary_evidence:
+        description: "Required URL or immutable log/hash proving forced-exit and hook-violation recovery from shared bad DAT to readable cell 6004 / portal 6000."
+        required: true
 
 permissions:
   contents: write
@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -48,47 +52,110 @@ jobs:
       - name: Resolve version
         id: version
         shell: pwsh
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
         run: |
-          $tag = "${{ github.event.inputs.tag }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) {
-            $tag = "${{ github.ref_name }}"
-          }
-          if ($tag -match '^v(?<ver>\d+\.\d+\.\d+)$') {
+          $tag = $env:REQUESTED_TAG.Trim()
+          if (-not [string]::IsNullOrWhiteSpace($tag)) {
+            if ($tag -notmatch '^v(?<ver>\d+\.\d+\.\d+)$') {
+              throw "Release tag must use vMAJOR.MINOR.PATCH format."
+            }
             $version = $Matches['ver']
           } else {
             $version = (Get-Content version.txt -Raw).Trim()
+            if ($version -notmatch '^\d+\.\d+\.\d+$') {
+              throw "version.txt must contain MAJOR.MINOR.PATCH."
+            }
             $tag = "v$version"
+          }
+          $sourceSha = (git rev-parse HEAD).Trim()
+          $tagSha = [string](git rev-list -n 1 $tag 2>$null)
+          $tagSha = $tagSha.Trim()
+          if (-not [string]::IsNullOrWhiteSpace($tagSha) -and $tagSha -ne $sourceSha) {
+            throw "Tag $tag resolves to $tagSha, but this build checked out $sourceSha."
           }
           Set-Content -Path version.txt -Value $version -NoNewline
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source_sha=$sourceSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "Building $tag ($version)"
 
       - name: Build release installer
         shell: pwsh
-        run: .\Build.ps1 -Configuration Release
+        run: |
+          .\Build.ps1 -Configuration Release
+          $setup = "artifacts\installer\AetheriumPlaySetup.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash
+          "$hash *AetheriumPlaySetup.exe" | Set-Content `
+            -LiteralPath "$setup.sha256" -Encoding ascii -NoNewline
+
+      - name: Verify active scan and native containment
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $project = ".\AetheriumLauncher.PatchTests\AetheriumLauncher.PatchTests.csproj"
+          $clientDir = Join-Path $env:RUNNER_TEMP "aetherium-release-client"
+          dotnet run --project $project -c Release -r win-x86 `
+            -p:AetheriumVersion=$version -- --prepare-release-client $clientDir
+          if ($LASTEXITCODE -ne 0) { throw "Release-client preparation failed ($LASTEXITCODE)." }
+          dotnet run --project $project -c Release -r win-x86 `
+            -p:AetheriumVersion=$version -- --scan-active
+          if ($LASTEXITCODE -ne 0) { throw "Active-program scan failed ($LASTEXITCODE)." }
+          $clientPath = Join-Path $clientDir "client.exe"
+          dotnet run --project $project -c Release -r win-x86 `
+            -p:AetheriumVersion=$version -- --suspended-integration $clientPath
+          if ($LASTEXITCODE -ne 0) { throw "Suspended native runtime-integrity integration failed ($LASTEXITCODE)." }
+          dotnet run --project $project -c Release -r win-x86 `
+            -p:AetheriumVersion=$version -- --job-kill-integration $clientPath
+          if ($LASTEXITCODE -ne 0) { throw "Forced-launcher containment integration failed ($LASTEXITCODE)." }
 
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DDD_CANARY_EVIDENCE: ${{ github.event.inputs.ddd_canary_evidence }}
         run: |
           $version = "${{ steps.version.outputs.version }}"
           $tag = "${{ steps.version.outputs.tag }}"
+          $sourceSha = "${{ steps.version.outputs.source_sha }}"
+          $dddCanaryEvidence = $env:DDD_CANARY_EVIDENCE.Trim()
           $setup = "artifacts\installer\AetheriumPlaySetup.exe"
+          $checksum = "$setup.sha256"
           if (-not (Test-Path $setup)) { throw "Missing $setup" }
+          if (-not (Test-Path $checksum)) { throw "Missing $checksum" }
+          if ([string]::IsNullOrWhiteSpace($dddCanaryEvidence)) {
+            throw "A recorded shared-bad-DAT forced-termination recovery canary is required."
+          }
+          if ($dddCanaryEvidence.Length -gt 2048 -or $dddCanaryEvidence -match '[\r\n]') {
+            throw "DDD canary evidence must be one line of at most 2,048 characters."
+          }
+          $canaryUri = $null
+          $isHttpsUrl = [Uri]::TryCreate(
+            $dddCanaryEvidence,
+            [UriKind]::Absolute,
+            [ref]$canaryUri) -and $canaryUri.Scheme -eq 'https'
+          $isSha256 = $dddCanaryEvidence -match '^(?i:sha256:)?[0-9a-f]{64}$'
+          if (-not $isHttpsUrl -and -not $isSha256) {
+            throw "DDD canary evidence must be an HTTPS URL or SHA-256 value."
+          }
 
           $notes = @"
           Aetherium Play $version
 
           Install or upgrade with AetheriumPlaySetup.exe.
+          Adds the launcher patch for faster DDD updates.
+          Exact source revision: https://github.com/${{ github.repository }}/commit/$sourceSha
+          SHA-256: attached AetheriumPlaySetup.exe.sha256
+          Authenticode status: unsigned
+          Shared-bad-DAT forced-termination canary: $dddCanaryEvidence
           Existing launchers check this release on startup (Help → Check for Updates).
           "@
 
           if (gh release view $tag 2>$null) {
-            gh release upload $tag $setup --clobber
+            throw "Release $tag already exists. Refusing to replace published binaries; use a new version/tag."
           } else {
-            gh release create $tag $setup `
+            gh release create $tag $setup $checksum `
+              --target $sourceSha `
               --title "Aetherium Play $version" `
               --notes $notes
           }

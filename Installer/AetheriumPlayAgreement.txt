@@ -19,6 +19,19 @@ Aetherium launcher plus required compatibility files (including third-party
 dgVoodoo 2 DirectDraw binaries by Dege — closed source; see the download
 sources page and dgVoodoo-NOTICE.md).
 
+While the game runs, Aetherium Play checks names, exact top-level titles, and
+version identity metadata for active programs to detect common Cheat Engine
+builds and verifies the exact process-local client hooks it installed. It
+resolves active executable paths only to read version resources and keeps a
+bounded, process/file-identity cache in launcher memory; full paths are not
+logged or uploaded. It does not scan directories, inspect arbitrary modules,
+upload a process list, or stop another program. A detected violation can prevent
+launch or end only the client.exe instance started by the launcher. Windows also
+ends that client if the launcher is forcibly terminated, and confirming the
+launcher's Exit warning closes the monitored client. The reason is recorded locally in
+%LocalAppData%\AetheriumPlay\anti-tamper.log and is not an automatic account
+ban. These checks are a deterrent and cannot prove that every client is clean.
+
 You are responsible for:
 
 - keeping backups of files you care about;
@@ -29,6 +42,7 @@ You are responsible for:
 
 Choosing "I accept the agreement" means that you understand the installation
 flow, accept this disclaimer, and authorize Aetherium Play Setup to download,
-verify, install, and update the files described above.
+verify, install, and update the files described above, and authorize the
+running-program identity and launched-client integrity checks described above.
 
 Developed by Vanquish, aka Chosen One.

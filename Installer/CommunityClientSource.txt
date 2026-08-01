@@ -37,10 +37,34 @@ shown above remains the user-facing location.
 Some files in this historical collection advertise keys from multiple
 overlapping shares. The upstream library always uses the first key, but that
 entry is obsolete for this client.exe and produces an invalid checksum.
-Launcher setup 1.0.5 includes a narrow, source-visible fix which tries each
-advertised node key and accepts one only when it decrypts valid MEGA node
-attributes. The exact executable size and SHA-256 checks above remain the final
-acceptance gate.
+The narrow, source-visible fix first introduced in launcher setup 1.0.5 remains
+present in 1.0.24: it tries each advertised node key and accepts one only when it
+decrypts valid MEGA node attributes. The exact executable size and SHA-256
+checks above remain the final acceptance gate.
 
 Only client.exe is handled by this step. portal.dat and cell.dat are updated
 separately by DDD from the game server selected in the launcher.
+
+AETHERIUM A09 ANTI-TAMPER DISCLOSURE
+
+Before launch, immediately after resume, and every two seconds while its client
+runs, Aetherium Play checks active process/image names, exact top-level program
+titles, and version-resource identity for common Cheat Engine builds. It
+resolves active executable full paths only to read version resources and retains
+a bounded process/file-identity cache in memory; full paths are not logged or
+uploaded. It also verifies the exact in-memory regions installed by its own A09
+client patch. It does not scan directories, enumerate arbitrary modules, upload
+a process list, stop Cheat Engine, or automatically ban an account. A violation
+prevents launch or ends only the client.exe instance started by Aetherium Play.
+Forcibly ending the launcher also ends that client. The reason is written locally
+to %LocalAppData%\AetheriumPlay\anti-tamper.log. This public user-mode check is a
+deterrent, not cryptographic proof against a purpose-built modified client.
+
+Public launcher source:
+https://github.com/Vanquish-6/Aetherium-Play
+
+Version 1.0.24 source/release record:
+https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.24
+
+The release record links the exact source commit and includes the setup SHA-256
+file. Version 1.0.24 is unsigned; no Authenticode signature is claimed.

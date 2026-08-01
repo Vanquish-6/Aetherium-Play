@@ -309,6 +309,8 @@ static class Program
                 result.WorkingDirectory,
                 result.LaunchDetail,
             });
+            process.WaitForExit();
+            result.AntiTamperGuard?.Dispose();
             return 0;
         }
         catch (Exception ex)

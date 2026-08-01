@@ -87,6 +87,8 @@ public partial class Form1 : Form
     private readonly List<TableLayoutPanel> fieldRows = new();
     private readonly List<Label> fieldLabels = new();
     private readonly List<ArcaneButton> toolButtons = new();
+    private readonly object runtimeGuardLock = new();
+    private readonly HashSet<ClientAntiTamperRuntimeGuard> runtimeGuards = [];
 
     private ZoneEraSurface? surface;
     private TransparentOverlayPanel? configOverlay;
@@ -123,6 +125,42 @@ public partial class Form1 : Form
         await UpdateChecker.CheckForUpdatesAsync(
             this,
             interactive: false);
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (e.Cancel)
+        {
+            return;
+        }
+
+        ClientAntiTamperRuntimeGuard[] guards;
+        lock (runtimeGuardLock)
+        {
+            guards = runtimeGuards.ToArray();
+        }
+
+        if (guards.Length != 0 &&
+            e.CloseReason is CloseReason.UserClosing or CloseReason.ApplicationExitCall)
+        {
+            var choice = MessageBox.Show(
+                this,
+                "Exiting Aetherium Launcher will also close the monitored game client. Exit now?",
+                LauncherName,
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (choice != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+        }
+
+        foreach (var guard in guards)
+        {
+            guard.Dispose();
+        }
     }
 
     private void BuildLayout()
@@ -919,6 +957,10 @@ public partial class Form1 : Form
             "Zone and the purple PLAY button both launch client.exe with the parchment settings.\n" +
             "The client always launches from your install folder so DAT updates stay in one place.\n" +
             "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
+            "A09 checks active program identity locally and verifies its own client hooks while the game runs.\n" +
+            "It resolves active executable paths only for version identity; paths stay local and are not logged.\n" +
+            "It does not scan directories, upload a process list, or stop another program.\n" +
+            "Forcibly ending the launcher also ends its monitored client.\n" +
             "Tools exposes Open Folder, ACD3DSetup, and ACSET.\n" +
             "Help → Check for Updates uses GitHub Releases.\n\n" +
             DeveloperCredit,
@@ -982,13 +1024,59 @@ public partial class Form1 : Form
             }
 
             SaveControlsToConfig();
-            ClientLauncher.Start(
+            var result = ClientLauncher.Start(
                 ReadFormConfig(),
                 ClientLauncher.GetRepositoryToolsDirectory());
+            TrackRuntimeGuard(result);
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, LauncherName);
+        }
+    }
+
+    private void TrackRuntimeGuard(ClientLaunchResult result)
+    {
+        var guard = result.AntiTamperGuard;
+        var process = result.Process;
+        if (guard is null || process is null)
+        {
+            return;
+        }
+
+        lock (runtimeGuardLock)
+        {
+            runtimeGuards.Add(guard);
+        }
+
+        var cleanupStarted = 0;
+        void CleanupRuntimeGuard()
+        {
+            if (Interlocked.Exchange(ref cleanupStarted, 1) != 0)
+            {
+                return;
+            }
+
+            guard.Dispose();
+            lock (runtimeGuardLock)
+            {
+                runtimeGuards.Remove(guard);
+            }
+        }
+
+        process.Exited += (_, _) => CleanupRuntimeGuard();
+        try
+        {
+            process.EnableRaisingEvents = true;
+            if (process.HasExited)
+            {
+                CleanupRuntimeGuard();
+            }
+        }
+        catch
+        {
+            CleanupRuntimeGuard();
+            throw;
         }
     }
 
