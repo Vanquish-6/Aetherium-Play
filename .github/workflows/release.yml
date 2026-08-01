@@ -8,7 +8,7 @@ on:
         required: false
         default: ""
       ddd_canary_evidence:
-        description: "Required URL or immutable log/hash proving forced-exit and hook-violation recovery from shared bad DAT to readable cell 6004 / portal 6000."
+        description: "Required HTTPS URL or immutable log hash proving both interrupted shared-bad-DAT recoveries reach readable cell 6004 while portal stays unchanged at 6002."
         required: true
 
 permissions:
@@ -124,7 +124,7 @@ jobs:
           if (-not (Test-Path $setup)) { throw "Missing $setup" }
           if (-not (Test-Path $checksum)) { throw "Missing $checksum" }
           if ([string]::IsNullOrWhiteSpace($dddCanaryEvidence)) {
-            throw "A recorded shared-bad-DAT forced-termination recovery canary is required."
+            throw "Recorded shared-bad-DAT recovery evidence is required."
           }
           if ($dddCanaryEvidence.Length -gt 2048 -or $dddCanaryEvidence -match '[\r\n]') {
             throw "DDD canary evidence must be one line of at most 2,048 characters."

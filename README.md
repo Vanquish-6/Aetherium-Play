@@ -177,8 +177,11 @@ Update feed (edit if the repo moves): `Vanquish-6/Aetherium-Play` in
 2. Commit and push
 3. Complete both destructive bad-DAT recovery canaries on disposable copies:
    force the launcher to end and force a hook-integrity violation during DDD,
-   then relaunch and verify readable/converged cell revision 6004 and portal
-   revision 6000. Record an immutable log/hash or URL.
+   then relaunch and verify readable cell revision 6004 with 524,954 records.
+   The already-complete portal must remain unchanged at revision 6002 with
+   51,001 records and SHA-256
+   `7A47FCCDE084B76DBF4B62DE9D28AD767ED7EA5EDEEC72033955252881BBE6DA`.
+   Record an immutable log hash or HTTPS URL.
 4. Tag and push the verified commit:
 
 ```powershell
