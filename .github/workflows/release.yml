@@ -69,8 +69,12 @@ jobs:
             $tag = "v$version"
           }
           $sourceSha = (git rev-parse HEAD).Trim()
-          $tagSha = [string](git rev-list -n 1 $tag 2>$null)
-          $tagSha = $tagSha.Trim()
+          $tagRef = [string](git for-each-ref --format='%(refname)' "refs/tags/$tag")
+          $tagSha = if ([string]::IsNullOrWhiteSpace($tagRef)) {
+            ""
+          } else {
+            ([string](git rev-list -n 1 $tag)).Trim()
+          }
           if (-not [string]::IsNullOrWhiteSpace($tagSha) -and $tagSha -ne $sourceSha) {
             throw "Tag $tag resolves to $tagSha, but this build checked out $sourceSha."
           }
