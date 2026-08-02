@@ -55,15 +55,20 @@ Launcher features:
 - Seeds graphics registry values; buttons for `ACD3DSetup.exe` / `ACSET.EXE`
 - Default and PK skins
 - Settings in `<install>\launcher.json` (fallback: `%LocalAppData%\AcLegacyLauncher\`)
-- Version 1.0.24 adds hash-gated, process-local DDD acceleration for the
-  verified public client. It leaves `client.exe`, `portal.dat`, and `cell.dat`
-  untouched by the launcher and fails before resume if either runtime hook
-  cannot be installed exactly.
+- Version 1.0.24 added hash-gated, process-local DDD acceleration. Current
+  source recognizes the exact verified public client and the exact
+  Aetherium-keyed admin build. It leaves `client.exe`, `portal.dat`, and
+  `cell.dat` untouched by the launcher and fails before resume if either
+  runtime hook cannot be installed exactly.
+- `--game-install <directory>` pins one launcher shortcut to a complete,
+  physical local game installation without replacing the installer's normal
+  `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
+  and any client outside the exact supported hashes before showing the launcher.
 
 ### Process-local DDD acceleration
 
-Version 1.0.24 uses standard Windows process-memory APIs to install two small
-runtime hooks while `client.exe` is suspended. They increase the native cache
+The launcher uses standard Windows process-memory APIs to install two small
+runtime hooks while an exact supported `client.exe` is suspended. They increase the native cache
 drain rate, cap each native DAT writer at 32 pending operations, and keep the
 patch UI incomplete until both writers drain. The capability exists only in
 that process; the launcher does not patch the executable or DAT files on disk.

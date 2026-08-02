@@ -31,27 +31,17 @@ public static class ClientLauncher
         bool prepareGraphics = true,
         Action<string>? report = null)
     {
-        var installDirectory = ResolveInstallDirectory(config.InstallPath)
-            ?? throw new InvalidOperationException(
-                "Install folder must point to a directory containing client.exe.");
-
-        var clientPath = Path.Combine(installDirectory, "client.exe");
-        if (!File.Exists(clientPath))
-        {
-            throw new FileNotFoundException($"Missing client.exe in {installDirectory}", clientPath);
-        }
-
-        if (string.IsNullOrWhiteSpace(config.TicketKey))
-        {
-            throw new InvalidOperationException("Account name is required.");
-        }
+        var (installDirectory, clientPath, expectedProfile) = ResolveValidatedLaunchTarget(config);
 
         // This local-only check happens before profile cleanup, graphics setup,
         // or process creation so a refused launch leaves the game untouched.
         ClientAntiTamper.EnsureNoKnownMemoryEditorRunning();
 
         RemoveLegacyProfileStore(report);
-        RemoveLegacyMulticlientFolder(installDirectory, report);
+        if (ShouldRemoveLegacyMulticlient(config))
+        {
+            RemoveLegacyMulticlientFolder(installDirectory, report);
+        }
 
         var seededSafeGraphics = false;
         string? graphicsDetail = null;
@@ -104,6 +94,11 @@ public static class ClientLauncher
             dddAcceleration = NativeClientDddAcceleration.Apply(
                 clientPath,
                 processHandle);
+            if (!ReferenceEquals(dddAcceleration.Profile, expectedProfile))
+            {
+                throw new InvalidDataException(
+                    "The verified client profile changed while the suspended process was starting.");
+            }
             dddAccelerationDetail = dddAcceleration.Detail;
             report?.Invoke(dddAccelerationDetail);
 
@@ -216,6 +211,40 @@ public static class ClientLauncher
                 }
                     .Where(detail => !string.IsNullOrWhiteSpace(detail))),
         };
+    }
+
+    internal static NativeClientDddAccelerationProfile ValidateForLaunch(LaunchConfig config) =>
+        ResolveValidatedLaunchTarget(config).Profile;
+
+    internal static bool ShouldRemoveLegacyMulticlient(LaunchConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return !config.PreserveLegacyMulticlient;
+    }
+
+    private static (
+        string InstallDirectory,
+        string ClientPath,
+        NativeClientDddAccelerationProfile Profile) ResolveValidatedLaunchTarget(LaunchConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var installDirectory = ResolveInstallDirectory(config.InstallPath)
+            ?? throw new InvalidOperationException(
+                "Install folder must point to a directory containing client.exe.");
+
+        var clientPath = Path.Combine(installDirectory, "client.exe");
+        if (!File.Exists(clientPath))
+        {
+            throw new FileNotFoundException($"Missing client.exe in {installDirectory}", clientPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(config.TicketKey))
+        {
+            throw new InvalidOperationException("Account name is required.");
+        }
+
+        var profile = NativeClientDddAcceleration.ResolveSupportedClientProfile(clientPath);
+        return (installDirectory, clientPath, profile);
     }
 
     public static IReadOnlyList<string> BuildArgumentParts(LaunchConfig config)

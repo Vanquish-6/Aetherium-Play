@@ -7,17 +7,70 @@ using System.Text;
 
 namespace AcLegacyLauncher;
 
+internal sealed class NativeClientDddAccelerationProfile
+{
+    internal NativeClientDddAccelerationProfile(
+        string id,
+        long expectedSize,
+        string expectedSha256,
+        uint preferredImageBase,
+        uint useTimeRva,
+        byte[] expectedUseTimeSignature,
+        uint downloadStatusRva,
+        byte[] expectedDownloadStatusSignature,
+        uint versionLiteralRva,
+        byte[] originalVersionLiteral)
+    {
+        Id = id;
+        ExpectedSize = expectedSize;
+        ExpectedSha256 = expectedSha256;
+        PreferredImageBase = preferredImageBase;
+        UseTimeRva = useTimeRva;
+        ExpectedUseTimeSignature = (byte[])expectedUseTimeSignature.Clone();
+        DownloadStatusRva = downloadStatusRva;
+        ExpectedDownloadStatusSignature = (byte[])expectedDownloadStatusSignature.Clone();
+        VersionLiteralRva = versionLiteralRva;
+        OriginalVersionLiteral = (byte[])originalVersionLiteral.Clone();
+    }
+
+    internal string Id { get; }
+
+    internal long ExpectedSize { get; }
+
+    internal string ExpectedSha256 { get; }
+
+    internal uint PreferredImageBase { get; }
+
+    internal uint UseTimeRva { get; }
+
+    internal byte[] ExpectedUseTimeSignature { get; }
+
+    internal uint DownloadStatusRva { get; }
+
+    internal uint DownloadStatusTailRva => DownloadStatusRva + 0x24;
+
+    internal byte[] ExpectedDownloadStatusSignature { get; }
+
+    internal uint VersionLiteralRva { get; }
+
+    internal byte[] OriginalVersionLiteral { get; }
+}
+
 internal sealed class NativeClientDddAccelerationInstallation
 {
     internal NativeClientDddAccelerationInstallation(
         string detail,
+        NativeClientDddAccelerationProfile profile,
         IReadOnlyList<NativeClientDddAcceleration.RemotePatchRegion> regions)
     {
         Detail = detail;
+        Profile = profile;
         Regions = regions;
     }
 
     internal string Detail { get; }
+
+    internal NativeClientDddAccelerationProfile Profile { get; }
 
     internal IReadOnlyList<NativeClientDddAcceleration.RemotePatchRegion> Regions { get; }
 }
@@ -45,6 +98,14 @@ internal static class NativeClientDddAcceleration
     internal const uint DownloadStatusRva = 0x0000_CFB0;
     internal const uint DownloadStatusTailRva = DownloadStatusRva + 0x24;
     internal const uint VersionLiteralRva = 0x001F_112C;
+    internal const string PublicProfileId = "public-retail-1.0.69";
+    internal const string AdminProfileId = "aetherium-admin-1.0.69";
+    internal const long AdminExpectedSize = 4_149_248;
+    internal const string AdminExpectedSha256 =
+        "0FF432B4B98F7510034B924F73D35CD1684DFA0AEB229F2DF31C57DB5936229F";
+    internal const uint AdminUseTimeRva = 0x0001_02E0;
+    internal const uint AdminDownloadStatusRva = 0x0000_F850;
+    internal const uint AdminVersionLiteralRva = 0x0023_8E8C;
     internal const int UseTimeTrampolineOffset = 0x80;
     internal const int DownloadStatusWrapperOffset = 0xA0;
     internal const int RemoteCodeSize = 0x100;
@@ -57,12 +118,20 @@ internal static class NativeClientDddAcceleration
     private const uint PageExecuteRead = 0x20;
     private const uint PageExecuteReadWrite = 0x40;
 
-    private static readonly byte[] ExpectedUseTimeSignature =
+    private static readonly byte[] PublicExpectedUseTimeSignature =
     [
         0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x83, 0xEC,
         0x08, 0x53, 0x55, 0x56, 0x57, 0x8B, 0xF9, 0x8B,
         0x47, 0x04, 0x85, 0xC0, 0xBE, 0xF8, 0xB7, 0x7E,
         0x00, 0x75, 0x37, 0xA1, 0x78, 0x08, 0x66, 0x00,
+    ];
+
+    private static readonly byte[] AdminExpectedUseTimeSignature =
+    [
+        0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x83, 0xEC,
+        0x08, 0x53, 0x55, 0x56, 0x57, 0x8B, 0xF9, 0x8B,
+        0x47, 0x04, 0x85, 0xC0, 0xBE, 0x78, 0x7E, 0x93,
+        0x00, 0x75, 0x37, 0xA1, 0xD0, 0xC2, 0x7A, 0x00,
     ];
 
     private static readonly byte[] OriginalUseTimePrologue =
@@ -116,6 +185,33 @@ internal static class NativeClientDddAcceleration
 
     private static readonly byte[] CapabilityVersionLiteral =
         Encoding.ASCII.GetBytes(CapabilityVersion + "\0");
+
+    private static readonly NativeClientDddAccelerationProfile PublicProfile = new(
+        PublicProfileId,
+        CommunityClientBootstrap.ExpectedSize,
+        CommunityClientBootstrap.ExpectedSha256,
+        PreferredImageBase,
+        UseTimeRva,
+        PublicExpectedUseTimeSignature,
+        DownloadStatusRva,
+        ExpectedDownloadStatusSignature,
+        VersionLiteralRva,
+        OriginalVersionLiteral);
+
+    private static readonly NativeClientDddAccelerationProfile AdminProfile = new(
+        AdminProfileId,
+        AdminExpectedSize,
+        AdminExpectedSha256,
+        PreferredImageBase,
+        AdminUseTimeRva,
+        AdminExpectedUseTimeSignature,
+        AdminDownloadStatusRva,
+        ExpectedDownloadStatusSignature,
+        AdminVersionLiteralRva,
+        OriginalVersionLiteral);
+
+    private static readonly IReadOnlyList<NativeClientDddAccelerationProfile> SupportedProfiles =
+        [PublicProfile, AdminProfile];
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr VirtualAllocEx(
@@ -177,26 +273,27 @@ internal static class NativeClientDddAcceleration
                 "Accelerated DAT repair requires the x86 Aetherium Launcher build.");
         }
 
-        VerifySupportedClientFile(clientPath);
+        var profile = ResolveSupportedClientProfile(clientPath);
 
-        var useTimeAddress = Address(PreferredImageBase + UseTimeRva);
-        var downloadStatusAddress = Address(PreferredImageBase + DownloadStatusRva);
-        var downloadStatusTailAddress = Address(PreferredImageBase + DownloadStatusTailRva);
-        var versionAddress = Address(PreferredImageBase + VersionLiteralRva);
+        var useTimeAddress = Address(profile.PreferredImageBase + profile.UseTimeRva);
+        var downloadStatusAddress = Address(profile.PreferredImageBase + profile.DownloadStatusRva);
+        var downloadStatusTailAddress = Address(
+            profile.PreferredImageBase + profile.DownloadStatusTailRva);
+        var versionAddress = Address(profile.PreferredImageBase + profile.VersionLiteralRva);
         VerifyRemoteBytes(
             processHandle,
             useTimeAddress,
-            ExpectedUseTimeSignature,
+            profile.ExpectedUseTimeSignature,
             "CLCache::UseTime");
         VerifyRemoteBytes(
             processHandle,
             downloadStatusAddress,
-            ExpectedDownloadStatusSignature,
+            profile.ExpectedDownloadStatusSignature,
             "CLCache::Get_Download_Status");
         VerifyRemoteBytes(
             processHandle,
             versionAddress,
-            OriginalVersionLiteral,
+            profile.OriginalVersionLiteral,
             "client version literal");
 
         var remoteCode = VirtualAllocEx(
@@ -216,7 +313,7 @@ internal static class NativeClientDddAcceleration
         var versionPatchAttempted = false;
         try
         {
-            var code = BuildRemoteCode(remoteCode);
+            var code = BuildRemoteCode(remoteCode, profile);
             WriteExact(processHandle, remoteCode, code, "accelerated DAT repair code");
             ProtectExact(
                 processHandle,
@@ -276,8 +373,9 @@ internal static class NativeClientDddAcceleration
                 "accelerated DAT repair capability marker");
 
             var installation = new NativeClientDddAccelerationInstallation(
-                $"Accelerated DAT repair enabled ({CapabilityVersion}; up to " +
+                $"Accelerated DAT repair enabled ({CapabilityVersion}; {profile.Id}; up to " +
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active).",
+                profile,
                 [
                     new RemotePatchRegion(
                         remoteCode,
@@ -309,7 +407,7 @@ internal static class NativeClientDddAcceleration
                 TryRollback(
                     processHandle,
                     versionAddress,
-                    OriginalVersionLiteral,
+                    profile.OriginalVersionLiteral,
                     "client version marker",
                     rollbackErrors);
             }
@@ -402,6 +500,14 @@ internal static class NativeClientDddAcceleration
 
     internal static byte[] BuildRemoteCode(IntPtr remoteCodeAddress)
     {
+        return BuildRemoteCode(remoteCodeAddress, PublicProfile);
+    }
+
+    internal static byte[] BuildRemoteCode(
+        IntPtr remoteCodeAddress,
+        NativeClientDddAccelerationProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
         var code = Enumerable.Repeat((byte)0xCC, RemoteCodeSize).ToArray();
         var trampolineAddress = Add(remoteCodeAddress, UseTimeTrampolineOffset);
         var wrapper = BuildUseTimeWrapper(
@@ -421,7 +527,8 @@ internal static class NativeClientDddAcceleration
         var trampolineJumpAddress = Add(
             remoteCodeAddress,
             UseTimeTrampolineOffset + OriginalUseTimePrologue.Length);
-        var originalContinuation = Address(PreferredImageBase + UseTimeRva + 6);
+        var originalContinuation = Address(
+            profile.PreferredImageBase + profile.UseTimeRva + 6);
         WriteRelativeDisplacement(
             code,
             UseTimeTrampolineOffset + OriginalUseTimePrologue.Length + 1,
@@ -553,7 +660,20 @@ internal static class NativeClientDddAcceleration
     }
 
     internal static byte[] SupportedSignatureForTest() =>
-        (byte[])ExpectedUseTimeSignature.Clone();
+        (byte[])PublicExpectedUseTimeSignature.Clone();
+
+    internal static NativeClientDddAccelerationProfile PublicProfileForTest() =>
+        PublicProfile;
+
+    internal static NativeClientDddAccelerationProfile AdminProfileForTest() =>
+        AdminProfile;
+
+    internal static NativeClientDddAccelerationProfile IdentifySupportedProfileForTest(
+        long size,
+        string sha256) =>
+        IdentifySupportedProfile(size, sha256)
+        ?? throw new InvalidDataException(
+            $"No verified A09 client profile matches {size:N0} bytes / SHA-256 {sha256}.");
 
     internal static byte[] DownloadStatusSignatureForTest() =>
         (byte[])ExpectedDownloadStatusSignature.Clone();
@@ -591,7 +711,8 @@ internal static class NativeClientDddAcceleration
     internal static byte[] CapabilityVersionForTest() =>
         (byte[])CapabilityVersionLiteral.Clone();
 
-    private static void VerifySupportedClientFile(string clientPath)
+    internal static NativeClientDddAccelerationProfile ResolveSupportedClientProfile(
+        string clientPath)
     {
         var file = new FileInfo(clientPath);
         if (!file.Exists)
@@ -599,11 +720,14 @@ internal static class NativeClientDddAcceleration
             throw new FileNotFoundException("Missing client.exe.", clientPath);
         }
 
-        if (file.Length != CommunityClientBootstrap.ExpectedSize)
+        var sizeCandidates = SupportedProfiles
+            .Where(profile => profile.ExpectedSize == file.Length)
+            .ToArray();
+        if (sizeCandidates.Length == 0)
         {
             throw new InvalidDataException(
                 $"client.exe is {file.Length:N0} bytes; accelerated DAT repair requires the " +
-                $"verified {CommunityClientBootstrap.ExpectedSize:N0}-byte DM client.");
+                "exact verified public or Aetherium admin DM client.");
         }
 
         using var stream = new FileStream(
@@ -614,16 +738,24 @@ internal static class NativeClientDddAcceleration
             bufferSize: 128 * 1024,
             FileOptions.SequentialScan);
         var actualHash = Convert.ToHexString(SHA256.HashData(stream));
-        if (!string.Equals(
-                actualHash,
-                CommunityClientBootstrap.ExpectedSha256,
-                StringComparison.OrdinalIgnoreCase))
+        var profile = IdentifySupportedProfile(file.Length, actualHash);
+        if (profile is null)
         {
             throw new InvalidDataException(
                 $"client.exe SHA-256 is {actualHash}; accelerated DAT repair requires the " +
-                $"verified public client {CommunityClientBootstrap.ExpectedSha256}.");
+                $"exact verified {string.Join(" or ", sizeCandidates.Select(candidate => candidate.Id))} " +
+                "client image.");
         }
+
+        return profile;
     }
+
+    private static NativeClientDddAccelerationProfile? IdentifySupportedProfile(
+        long size,
+        string sha256) =>
+        SupportedProfiles.SingleOrDefault(profile =>
+            profile.ExpectedSize == size &&
+            profile.ExpectedSha256.Equals(sha256, StringComparison.OrdinalIgnoreCase));
 
     private static void VerifyRemoteBytes(
         IntPtr processHandle,

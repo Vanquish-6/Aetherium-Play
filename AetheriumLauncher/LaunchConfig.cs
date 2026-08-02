@@ -1,5 +1,7 @@
 namespace AcLegacyLauncher;
 
+using System.Text.Json.Serialization;
+
 public sealed class LaunchConfig
 {
     public const string DefaultInstallPath = @"C:\asheronscalldm";
@@ -21,4 +23,7 @@ public sealed class LaunchConfig
     public bool SeedSafeGraphics { get; set; } = false;
 
     public string? Skin { get; set; }
+
+    [JsonIgnore]
+    public bool PreserveLegacyMulticlient { get; set; }
 }

@@ -92,8 +92,8 @@ against a purpose-built modified client.
 Public launcher source:
 https://github.com/Vanquish-6/Aetherium-Play
 
-Version 1.0.24 source/release record:
-https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.24
+Version 1.0.25 source/release record:
+https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.25
 
 The release page links the exact source commit and includes the setup SHA-256
-file. Aetherium Play 1.0.24 is unsigned; no Authenticode signature is claimed.
+file. Aetherium Play 1.0.25 is unsigned; no Authenticode signature is claimed.

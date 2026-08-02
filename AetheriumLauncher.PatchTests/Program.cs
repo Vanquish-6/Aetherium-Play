@@ -97,6 +97,79 @@ Equal(12, capabilityVersion.Length, "capability version literal length");
 BytesEqual("2005.02.001\0"u8.ToArray(), originalVersion, "original version literal");
 BytesEqual("2005.02.A09\0"u8.ToArray(), capabilityVersion, "capability version literal");
 
+var publicProfile = NativeClientDddAcceleration.PublicProfileForTest();
+Equal(NativeClientDddAcceleration.PublicProfileId, publicProfile.Id, "public profile id");
+Equal(CommunityClientBootstrap.ExpectedSize, publicProfile.ExpectedSize, "public profile size");
+Equal(
+    CommunityClientBootstrap.ExpectedSha256,
+    publicProfile.ExpectedSha256,
+    "public profile SHA-256");
+Equal(NativeClientDddAcceleration.UseTimeRva, publicProfile.UseTimeRva, "public UseTime RVA");
+Equal(
+    NativeClientDddAcceleration.DownloadStatusRva,
+    publicProfile.DownloadStatusRva,
+    "public download-status RVA");
+Equal(
+    NativeClientDddAcceleration.VersionLiteralRva,
+    publicProfile.VersionLiteralRva,
+    "public version-literal RVA");
+BytesEqual(useTimeSignature, publicProfile.ExpectedUseTimeSignature, "public profile UseTime signature");
+Equal(
+    publicProfile.Id,
+    NativeClientDddAcceleration.IdentifySupportedProfileForTest(
+        publicProfile.ExpectedSize,
+        publicProfile.ExpectedSha256.ToLowerInvariant()).Id,
+    "case-insensitive public profile selection");
+
+var adminProfile = NativeClientDddAcceleration.AdminProfileForTest();
+Equal(NativeClientDddAcceleration.AdminProfileId, adminProfile.Id, "admin profile id");
+Equal(NativeClientDddAcceleration.AdminExpectedSize, adminProfile.ExpectedSize, "admin profile size");
+Equal(
+    NativeClientDddAcceleration.AdminExpectedSha256,
+    adminProfile.ExpectedSha256,
+    "admin profile SHA-256");
+Equal(
+    NativeClientDddAcceleration.AdminUseTimeRva,
+    adminProfile.UseTimeRva,
+    "admin UseTime RVA");
+Equal(
+    NativeClientDddAcceleration.AdminDownloadStatusRva,
+    adminProfile.DownloadStatusRva,
+    "admin download-status RVA");
+Equal(
+    NativeClientDddAcceleration.AdminVersionLiteralRva,
+    adminProfile.VersionLiteralRva,
+    "admin version-literal RVA");
+BytesEqual(
+    Convert.FromHexString(
+        "558BEC83E4F883EC08535556578BF98B470485C0BE787E93007537A1D0C27A00"),
+    adminProfile.ExpectedUseTimeSignature,
+    "admin profile UseTime signature");
+BytesEqual(
+    downloadStatusSignature,
+    adminProfile.ExpectedDownloadStatusSignature,
+    "admin profile download-status signature");
+BytesEqual(originalVersion, adminProfile.OriginalVersionLiteral, "admin original version literal");
+Equal(
+    adminProfile.Id,
+    NativeClientDddAcceleration.IdentifySupportedProfileForTest(
+        adminProfile.ExpectedSize,
+        adminProfile.ExpectedSha256).Id,
+    "exact admin profile selection");
+var unknownProfileRejected = false;
+try
+{
+    _ = NativeClientDddAcceleration.IdentifySupportedProfileForTest(
+        adminProfile.ExpectedSize,
+        new string('0', 64));
+}
+catch (InvalidDataException)
+{
+    unknownProfileRejected = true;
+}
+
+True(unknownProfileRejected, "unknown same-size admin image rejection");
+
 var processNameMatch = new RunningProgramIdentity(
     101,
     "cheatengine-x86_64",
@@ -239,6 +312,15 @@ Equal(
     NativeClientDddAcceleration.DecodeRelativeTarget(remoteCode, trampoline + 6, remoteBase),
     "trampoline continuation");
 
+var adminRemoteCode = NativeClientDddAcceleration.BuildRemoteCode(remoteBase, adminProfile);
+Equal(
+    new IntPtr(unchecked((int)(adminProfile.PreferredImageBase + adminProfile.UseTimeRva + 6))),
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        adminRemoteCode,
+        trampoline + 6,
+        remoteBase),
+    "admin trampoline continuation");
+
 var statusWrapper = NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest();
 BytesEqual(
     Convert.FromHexString(
@@ -331,10 +413,236 @@ Equal(highStatusWrapper,
         downloadStatusTailAddress),
     "high-address download-status detour");
 
+var emptyStartupOptions = LauncherStartupOptions.Parse([]);
+True(emptyStartupOptions.GameInstallDirectory is null, "default UI install selection");
+var startupTestDirectory = Path.Combine(
+    Path.GetTempPath(),
+    $"aetherium-startup-options-{Guid.NewGuid():N}");
+var startupLinkDirectory = startupTestDirectory + "-link";
+Directory.CreateDirectory(startupTestDirectory);
+try
+{
+    foreach (var fileName in new[] { "client.exe", "portal.dat", "cell.dat" })
+    {
+        File.WriteAllBytes(Path.Combine(startupTestDirectory, fileName), [0x01]);
+    }
+
+    var resolvedClientPath = string.Empty;
+    var explicitStartupOptions = LauncherStartupOptions.Parse(
+        ["--GAME-INSTALL", startupTestDirectory],
+        clientPath =>
+        {
+            resolvedClientPath = clientPath;
+            return publicProfile;
+        });
+    Equal(
+        Path.GetFullPath(startupTestDirectory),
+        explicitStartupOptions.GameInstallDirectory!,
+        "explicit UI install selection");
+    Equal(
+        Path.Combine(Path.GetFullPath(startupTestDirectory), "client.exe"),
+        resolvedClientPath,
+        "explicit UI exact-profile validator path");
+    True(ReferenceEquals(publicProfile, explicitStartupOptions.ClientProfile),
+        "explicit UI resolved profile retention");
+
+    var unsupportedClientRejected = false;
+    try
+    {
+        _ = LauncherStartupOptions.Parse(["--game-install", startupTestDirectory]);
+    }
+    catch (InvalidDataException)
+    {
+        unsupportedClientRejected = true;
+    }
+
+    True(unsupportedClientRejected, "unsupported explicit UI client rejection");
+
+    File.WriteAllBytes(Path.Combine(startupTestDirectory, "cell.dat"), []);
+    var emptyDatRejected = false;
+    try
+    {
+        _ = LauncherStartupOptions.Parse(
+            ["--game-install", startupTestDirectory],
+            _ => publicProfile);
+    }
+    catch (InvalidDataException)
+    {
+        emptyDatRejected = true;
+    }
+
+    True(emptyDatRejected, "empty explicit UI DAT rejection");
+    File.WriteAllBytes(Path.Combine(startupTestDirectory, "cell.dat"), [0x01]);
+
+    var legacyWorkspace = Path.Combine(startupTestDirectory, "multiclient");
+    Directory.CreateDirectory(legacyWorkspace);
+    var legacyMarker = Path.Combine(legacyWorkspace, "must-remain.bin");
+    File.WriteAllBytes(legacyMarker, [0xA5]);
+    var failedStartRejectedBeforeCleanup = false;
+    try
+    {
+        _ = ClientLauncher.Start(
+            new LaunchConfig
+            {
+                InstallPath = startupTestDirectory,
+                TicketKey = "profile-validation-test",
+            },
+            prepareGraphics: false);
+    }
+    catch (InvalidDataException)
+    {
+        failedStartRejectedBeforeCleanup = true;
+    }
+
+    True(failedStartRejectedBeforeCleanup, "unsupported launch rejected before side effects");
+    True(File.Exists(legacyMarker), "unsupported launch preserved legacy multiclient marker");
+    True(
+        !ClientLauncher.ShouldRemoveLegacyMulticlient(
+            new LaunchConfig { PreserveLegacyMulticlient = true }),
+        "startup override preserves legacy multiclient");
+    True(
+        ClientLauncher.ShouldRemoveLegacyMulticlient(new LaunchConfig()),
+        "ordinary launch retains legacy multiclient migration");
+
+    foreach (var disallowedPath in new[]
+             {
+                 @"\\server\share\Aetherium",
+                 @"\\?\C:\Aetherium",
+                 @"\??\C:\Aetherium",
+             })
+    {
+        var disallowedRootRejected = false;
+        try
+        {
+            _ = LauncherStartupOptions.Parse(
+                ["--game-install", disallowedPath],
+                _ => publicProfile);
+        }
+        catch (ArgumentException)
+        {
+            disallowedRootRejected = true;
+        }
+
+        True(disallowedRootRejected, $"UNC/device UI path rejection: {disallowedPath}");
+    }
+
+    foreach (var label in new[] { "install root", "required DAT" })
+    {
+        var reparseAttributesRejected = false;
+        try
+        {
+            LauncherStartupOptions.EnsureNotReparsePointForTest(
+                FileAttributes.ReparsePoint | FileAttributes.Archive,
+                label);
+        }
+        catch (InvalidDataException)
+        {
+            reparseAttributesRejected = true;
+        }
+
+        True(reparseAttributesRejected, $"deterministic {label} reparse rejection");
+    }
+
+    var cellPath = Path.Combine(startupTestDirectory, "cell.dat");
+    var cellTargetPath = Path.Combine(startupTestDirectory, "cell-target.dat");
+    try
+    {
+        File.WriteAllBytes(cellTargetPath, [0x01]);
+        File.Delete(cellPath);
+        File.CreateSymbolicLink(cellPath, cellTargetPath);
+        var reparseFileRejected = false;
+        try
+        {
+            _ = LauncherStartupOptions.Parse(
+                ["--game-install", startupTestDirectory],
+                _ => publicProfile);
+        }
+        catch (InvalidDataException)
+        {
+            reparseFileRejected = true;
+        }
+
+        True(reparseFileRejected, "reparse DAT rejection");
+    }
+    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or
+                               PlatformNotSupportedException)
+    {
+        Console.WriteLine($"SKIP: file reparse test unavailable: {ex.Message}");
+    }
+    finally
+    {
+        if (File.Exists(cellPath))
+        {
+            File.Delete(cellPath);
+        }
+
+        if (File.Exists(cellTargetPath))
+        {
+            File.Delete(cellTargetPath);
+        }
+
+        File.WriteAllBytes(cellPath, [0x01]);
+    }
+
+    try
+    {
+        Directory.CreateSymbolicLink(startupLinkDirectory, startupTestDirectory);
+        var reparseRootRejected = false;
+        try
+        {
+            _ = LauncherStartupOptions.Parse(
+                ["--game-install", startupLinkDirectory],
+                _ => publicProfile);
+        }
+        catch (InvalidDataException)
+        {
+            reparseRootRejected = true;
+        }
+
+        True(reparseRootRejected, "reparse install-root rejection");
+    }
+    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or
+                               PlatformNotSupportedException)
+    {
+        Console.WriteLine($"SKIP: directory reparse test unavailable: {ex.Message}");
+    }
+}
+finally
+{
+    if (Directory.Exists(startupLinkDirectory))
+    {
+        Directory.Delete(startupLinkDirectory);
+    }
+
+    Directory.Delete(startupTestDirectory, recursive: true);
+}
+
+var unknownUiArgumentRejected = false;
+try
+{
+    _ = LauncherStartupOptions.Parse(["--unknown"]);
+}
+catch (ArgumentException)
+{
+    unknownUiArgumentRejected = true;
+}
+
+True(unknownUiArgumentRejected, "unknown UI argument rejection");
+
 Console.WriteLine(
-    "PASS: A09 capability, Cheat Engine identity matching, exact client signatures, " +
+    "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
+    "exact client signatures, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
     "layouts, branches, and detours verified.");
+
+if (args is ["--verify-game-install", var gameInstallDirectory])
+{
+    var options = LauncherStartupOptions.Parse(
+        ["--game-install", gameInstallDirectory]);
+    Console.WriteLine(
+        $"PASS: verified physical game install {options.GameInstallDirectory} as " +
+        $"{options.ClientProfile?.Id}.");
+}
 
 if (args is ["--scan-active"])
 {
@@ -853,29 +1161,10 @@ internal static class RemoteMemoryTest
                 $"Live integrity canary refused non-client executable {image.Name}.");
         }
 
-        if (image.Length != CommunityClientBootstrap.ExpectedSize)
-        {
-            throw new InvalidDataException(
-                $"Live integrity canary client size is {image.Length}; expected " +
-                $"{CommunityClientBootstrap.ExpectedSize}.");
-        }
-
-        using (var imageStream = image.OpenRead())
-        {
-            var actualHash = Convert.ToHexString(SHA256.HashData(imageStream));
-            if (!actualHash.Equals(
-                    CommunityClientBootstrap.ExpectedSha256,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidDataException(
-                    $"Live integrity canary client SHA-256 is {actualHash}; expected " +
-                    CommunityClientBootstrap.ExpectedSha256 + ".");
-            }
-        }
+        var profile = NativeClientDddAcceleration.ResolveSupportedClientProfile(imagePath);
 
         var capabilityAddress = new IntPtr(unchecked((int)(
-            NativeClientDddAcceleration.PreferredImageBase +
-            NativeClientDddAcceleration.VersionLiteralRva)));
+            profile.PreferredImageBase + profile.VersionLiteralRva)));
         var expectedCapability = NativeClientDddAcceleration.CapabilityVersionForTest();
         if (!ReadBytes(processHandle, capabilityAddress, expectedCapability.Length)
                 .SequenceEqual(expectedCapability))
@@ -885,8 +1174,7 @@ internal static class RemoteMemoryTest
         }
 
         var useTimeAddress = new IntPtr(unchecked((int)(
-            NativeClientDddAcceleration.PreferredImageBase +
-            NativeClientDddAcceleration.UseTimeRva)));
+            profile.PreferredImageBase + profile.UseTimeRva)));
         var useTimePatch = ReadBytes(processHandle, useTimeAddress, 6);
         if (useTimePatch[0] != 0xE9 || useTimePatch[5] != 0x90)
         {

@@ -89,6 +89,7 @@ public partial class Form1 : Form
     private readonly List<ArcaneButton> toolButtons = new();
     private readonly object runtimeGuardLock = new();
     private readonly HashSet<ClientAntiTamperRuntimeGuard> runtimeGuards = [];
+    private readonly string? startupInstallDirectory;
 
     private ZoneEraSurface? surface;
     private TransparentOverlayPanel? configOverlay;
@@ -112,9 +113,19 @@ public partial class Form1 : Form
     private string currentSkin = DefaultSkinName;
 
     public Form1()
+        : this(null)
     {
+    }
+
+    internal Form1(string? startupInstallDirectory)
+    {
+        this.startupInstallDirectory = startupInstallDirectory;
         InitializeComponent();
         BuildLayout();
+        if (startupInstallDirectory is not null)
+        {
+            installPathTextBox.ReadOnly = true;
+        }
         LoadConfigIntoControls();
         Shown += Form1_Shown;
     }
@@ -985,6 +996,15 @@ public partial class Form1 : Form
 
     private void BrowseButton_Click(object? sender, EventArgs e)
     {
+        if (startupInstallDirectory is not null)
+        {
+            MessageBox.Show(
+                this,
+                $"This shortcut is pinned to {startupInstallDirectory}",
+                LauncherName);
+            return;
+        }
+
         using var dialog = new FolderBrowserDialog
         {
             Description = "Choose the folder containing client.exe",
@@ -1023,9 +1043,17 @@ public partial class Form1 : Form
                 return;
             }
 
+            var config = ReadFormConfig();
+            if (startupInstallDirectory is not null)
+            {
+                _ = LauncherStartupOptions.Parse(
+                    ["--game-install", startupInstallDirectory]);
+            }
+
+            ClientLauncher.ValidateForLaunch(config);
             SaveControlsToConfig();
             var result = ClientLauncher.Start(
-                ReadFormConfig(),
+                config,
                 ClientLauncher.GetRepositoryToolsDirectory());
             TrackRuntimeGuard(result);
         }
@@ -1084,7 +1112,7 @@ public partial class Form1 : Form
     {
         return new LaunchConfig
         {
-            InstallPath = installPathTextBox.Text.Trim(),
+            InstallPath = startupInstallDirectory ?? installPathTextBox.Text.Trim(),
             TicketKey = usernameTextBox.Text.Trim(),
             Host = hostTextBox.Text.Trim(),
             Port = (int)portNumeric.Value,
@@ -1093,6 +1121,7 @@ public partial class Form1 : Form
             UseNoDisplayMode = useNoDisplayModeCheckBox.Checked,
             SeedSafeGraphics = seedSafeGraphicsCheckBox.Checked,
             Skin = currentSkin,
+            PreserveLegacyMulticlient = startupInstallDirectory is not null,
         };
     }
 
@@ -1148,7 +1177,8 @@ public partial class Form1 : Form
 
     private string? GetInstallDirectory()
     {
-        return ClientLauncher.ResolveInstallDirectory(installPathTextBox.Text);
+        return ClientLauncher.ResolveInstallDirectory(
+            startupInstallDirectory ?? installPathTextBox.Text);
     }
 
     private void LoadConfigIntoControls()
@@ -1177,7 +1207,7 @@ public partial class Form1 : Form
 
         ClientLauncher.RemoveLegacyProfileStore();
         var installDirectory = GetInstallDirectory();
-        if (installDirectory is not null)
+        if (startupInstallDirectory is null && installDirectory is not null)
         {
             ClientLauncher.RemoveLegacyMulticlientFolder(installDirectory);
         }
@@ -1242,7 +1272,7 @@ public partial class Form1 : Form
 
     private (LaunchConfig Config, bool LoadedFromDisk) LoadConfig()
     {
-        var installPath = installPathTextBox.Text.Trim();
+        var installPath = startupInstallDirectory ?? installPathTextBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(installPath))
         {
             installPath = FindDefaultInstallDirectory() ?? LaunchConfig.DefaultInstallPath;
@@ -1258,7 +1288,11 @@ public partial class Form1 : Form
             try
             {
                 var config = JsonSerializer.Deserialize<LaunchConfig>(File.ReadAllText(configPath)) ?? new LaunchConfig();
-                if (string.IsNullOrWhiteSpace(config.InstallPath))
+                if (startupInstallDirectory is not null)
+                {
+                    config.InstallPath = startupInstallDirectory;
+                }
+                else if (string.IsNullOrWhiteSpace(config.InstallPath))
                 {
                     config.InstallPath = installPath;
                 }

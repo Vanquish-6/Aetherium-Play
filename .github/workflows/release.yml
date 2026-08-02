@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build (e.g. v1.0.24). Leave empty to build the current ref and use version.txt."
+        description: "Existing tag to build (e.g. v1.0.25). Leave empty to build the current ref and use version.txt."
         required: false
         default: ""
       ddd_canary_evidence:
@@ -147,7 +147,7 @@ jobs:
           Aetherium Play $version
 
           Install or upgrade with AetheriumPlaySetup.exe.
-          Adds the launcher patch for faster DDD updates.
+          Extends the launcher patch for faster DDD updates.
           Exact source revision: https://github.com/${{ github.repository }}/commit/$sourceSha
           SHA-256: attached AetheriumPlaySetup.exe.sha256
           Authenticode status: unsigned

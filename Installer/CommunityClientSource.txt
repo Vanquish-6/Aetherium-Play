@@ -38,7 +38,7 @@ Some files in this historical collection advertise keys from multiple
 overlapping shares. The upstream library always uses the first key, but that
 entry is obsolete for this client.exe and produces an invalid checksum.
 The narrow, source-visible fix first introduced in launcher setup 1.0.5 remains
-present in 1.0.24: it tries each advertised node key and accepts one only when it
+present in 1.0.25: it tries each advertised node key and accepts one only when it
 decrypts valid MEGA node attributes. The exact executable size and SHA-256
 checks above remain the final acceptance gate.
 
@@ -63,8 +63,8 @@ deterrent, not cryptographic proof against a purpose-built modified client.
 Public launcher source:
 https://github.com/Vanquish-6/Aetherium-Play
 
-Version 1.0.24 source/release record:
-https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.24
+Version 1.0.25 source/release record:
+https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.25
 
 The release record links the exact source commit and includes the setup SHA-256
-file. Version 1.0.24 is unsigned; no Authenticode signature is claimed.
+file. Version 1.0.25 is unsigned; no Authenticode signature is claimed.

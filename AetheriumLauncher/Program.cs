@@ -132,10 +132,26 @@ static class Program
             return RunSmokeLaunch();
         }
 
+        LauncherStartupOptions startupOptions;
+        try
+        {
+            startupOptions = LauncherStartupOptions.Parse(args);
+        }
+        catch (Exception ex)
+        {
+            ApplicationConfiguration.Initialize();
+            MessageBox.Show(
+                ex.Message,
+                "Aetherium Launcher",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return 2;
+        }
+
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
-        Application.Run(new Form1());
+        Application.Run(new Form1(startupOptions.GameInstallDirectory));
         return 0;
     }
 
