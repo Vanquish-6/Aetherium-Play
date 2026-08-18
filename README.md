@@ -60,9 +60,9 @@ Launcher features:
   Aetherium-keyed admin build. It leaves `client.exe`, `portal.dat`, and
   `cell.dat` untouched by the launcher and fails before resume if any
   runtime hook cannot be installed exactly.
-- Version 1.0.26 restores client launch after the XP-label hitch skip: the
-  `SetText` detour keeps the original TextRegion in `ecx` before `ClearAllText`.
-  It also skips unchanged buff-duration and XP/allegiance number labels.
+- Version 1.0.27 restores client launch after the 1.0.26 XP-label hitch
+  skips. Buff-duration labels still skip unchanged `m:ss` rebuilds; the
+  global `SetText` / allegiance XP detours are not installed.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
@@ -75,13 +75,10 @@ runtime hooks while an exact supported `client.exe` is suspended. Two of them
 increase the native cache drain rate, cap each native DAT writer at 32 pending
 operations, and keep the patch UI incomplete until both writers drain. A third
 replaces `SpellRegion::Update` so open buff/debuff duration labels skip a full
-text rebuild when the `m:ss` string has not changed. Two more skip
-`TextRegion::SetText` when the glyphs already match, and skip
-`AllegPanel::SetXPChange` visuals for sworn characters so vassal pass-up does
-not rebuild hidden XP-cost labels on every available-XP write. Version 1.0.26
-keeps the original TextRegion in `ecx` when that `SetText` detour falls through
-to `ClearAllText`, so the hitch skip does not crash the client during UI
-bring-up. The capability exists only in that process; the launcher does not
+text rebuild when the `m:ss` string has not changed. Version 1.0.27 does not
+install the global `TextRegion::SetText` or `AllegPanel::SetXPChange` detours
+that 1.0.26 used for XP-panel hitch skipping; those prevented the client from
+opening. The capability exists only in that process; the launcher does not
 patch the executable or DAT files on disk.
 
 When the server's launcher requirement is enabled, only a login carrying the

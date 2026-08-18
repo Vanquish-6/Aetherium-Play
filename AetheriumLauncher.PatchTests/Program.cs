@@ -1079,7 +1079,6 @@ True(unknownUiArgumentRejected, "unknown UI argument rejection");
 Console.WriteLine(
     "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
     "exact client signatures, SpellRegion duration-text hitch bypass, " +
-    "XP label hitch bypass, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
     "layouts, branches, and detours verified.");
 
@@ -1172,7 +1171,7 @@ if (args is [var integrationMode, var clientPath] &&
             "runtime patch detail capability marker");
         True(detail.Contains("async writer guard active", StringComparison.Ordinal),
             "runtime patch detail writer guard");
-        Equal(7, installation.Regions.Count, "monitored runtime patch region count");
+        Equal(5, installation.Regions.Count, "monitored runtime patch region count");
         NativeClientDddAcceleration.VerifyInstalled(processHandle, installation);
 
         foreach (var region in installation.Regions)

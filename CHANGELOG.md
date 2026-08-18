@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.27 - 2026-08-18
+
+### Fixed
+
+- 1.0.26 still prevented the client from opening for updater installs. The
+  global `TextRegion::SetText` and `AllegPanel::SetXPChange` hitch skips are
+  no longer installed. Buff-duration skipping through `SpellRegion::Update`
+  remains. DDD drain hooks are unchanged.
+
 ## 1.0.26 - 2026-08-18
 
 ### Fixed

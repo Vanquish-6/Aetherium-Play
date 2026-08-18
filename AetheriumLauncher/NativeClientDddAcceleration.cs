@@ -174,9 +174,10 @@ internal sealed class NativeClientDddAccelerationInstallation
 /// Two CLCache detours drain inbound DAT work faster and hold the patch UI
 /// incomplete until both writers are idle. A third detour replaces
 /// SpellRegion::Update so open buff/debuff duration labels skip ClearAllText
-/// when the m:ss string is unchanged. Two more detours skip TextRegion::SetText
-/// when the glyphs already match and skip AllegPanel::SetXPChange visuals for
-/// sworn characters (hidden xp-cost rebuilds on every available-XP write).
+/// when the m:ss string is unchanged. Global TextRegion::SetText and
+/// AllegPanel::SetXPChange detours are generated for tests but are not
+/// installed: 1.0.26 hooked them for XP-label hitch skipping and that
+/// prevented the client from opening.
 ///
 /// The verified retail layout exposes each Asynch_Cache pending-request count
 /// at +0x60. Inbound consumption pauses when either writer reaches the
@@ -518,10 +519,6 @@ internal static class NativeClientDddAcceleration
             profile.PreferredImageBase + profile.DownloadStatusTailRva);
         var spellRegionAddress = Address(
             profile.PreferredImageBase + profile.SpellRegion.UpdateRva);
-        var setTextAddress = Address(
-            profile.PreferredImageBase + profile.XpLabel.SetTextRva);
-        var allegPanelAddress = Address(
-            profile.PreferredImageBase + profile.XpLabel.AllegPanelSetXpChangeRva);
         var versionAddress = Address(profile.PreferredImageBase + profile.VersionLiteralRva);
         VerifyRemoteBytes(
             processHandle,
@@ -538,16 +535,6 @@ internal static class NativeClientDddAcceleration
             spellRegionAddress,
             profile.SpellRegion.ExpectedSignature,
             "SpellRegion::Update");
-        VerifyRemoteBytes(
-            processHandle,
-            setTextAddress,
-            profile.XpLabel.ExpectedSetTextSignature,
-            "TextRegion::SetText");
-        VerifyRemoteBytes(
-            processHandle,
-            allegPanelAddress,
-            profile.XpLabel.ExpectedAllegPanelSignature,
-            "AllegPanel::SetXPChange");
         VerifyRemoteBytes(
             processHandle,
             versionAddress,
@@ -569,8 +556,6 @@ internal static class NativeClientDddAcceleration
         var useTimePatchAttempted = false;
         var downloadStatusPatchAttempted = false;
         var spellRegionPatchAttempted = false;
-        var setTextPatchAttempted = false;
-        var allegPanelPatchAttempted = false;
         var versionPatchAttempted = false;
         try
         {
@@ -636,36 +621,6 @@ internal static class NativeClientDddAcceleration
                 (nuint)spellRegionPatch.Length,
                 "SpellRegion::Update detour");
 
-            var setTextPatch = BuildStolenDetourPatch(
-                setTextAddress,
-                Add(remoteCode, SetTextWrapperOffset));
-            setTextPatchAttempted = true;
-            WriteProtectedExact(
-                processHandle,
-                setTextAddress,
-                setTextPatch,
-                "TextRegion::SetText detour");
-            FlushExact(
-                processHandle,
-                setTextAddress,
-                (nuint)setTextPatch.Length,
-                "TextRegion::SetText detour");
-
-            var allegPanelPatch = BuildStolenDetourPatch(
-                allegPanelAddress,
-                Add(remoteCode, AllegPanelWrapperOffset));
-            allegPanelPatchAttempted = true;
-            WriteProtectedExact(
-                processHandle,
-                allegPanelAddress,
-                allegPanelPatch,
-                "AllegPanel::SetXPChange detour");
-            FlushExact(
-                processHandle,
-                allegPanelAddress,
-                (nuint)allegPanelPatch.Length,
-                "AllegPanel::SetXPChange detour");
-
             // The server echoes this exact same-length version in PacketTwo. The
             // client also compares PacketTwo against this literal, so the marker
             // advertises the fully-installed hooks without changing the legacy
@@ -681,7 +636,7 @@ internal static class NativeClientDddAcceleration
             var installation = new NativeClientDddAccelerationInstallation(
                 $"Accelerated DAT repair enabled ({CapabilityVersion}; {profile.Id}; up to " +
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active; " +
-                "SpellRegion duration-text hitch bypass active; XP label hitch bypass active).",
+                "SpellRegion duration-text hitch bypass active).",
                 profile,
                 [
                     new RemotePatchRegion(
@@ -700,14 +655,6 @@ internal static class NativeClientDddAcceleration
                         spellRegionAddress,
                         spellRegionPatch,
                         "installed SpellRegion::Update detour"),
-                    new RemotePatchRegion(
-                        setTextAddress,
-                        setTextPatch,
-                        "installed TextRegion::SetText detour"),
-                    new RemotePatchRegion(
-                        allegPanelAddress,
-                        allegPanelPatch,
-                        "installed AllegPanel::SetXPChange detour"),
                     new RemotePatchRegion(
                         versionAddress,
                         CapabilityVersionLiteral,
@@ -728,39 +675,6 @@ internal static class NativeClientDddAcceleration
                     versionAddress,
                     profile.OriginalVersionLiteral,
                     "client version marker",
-                    rollbackErrors);
-            }
-
-            if (allegPanelPatchAttempted)
-            {
-                TryRollback(
-                    processHandle,
-                    allegPanelAddress,
-                    OriginalAllegPanelPrologue,
-                    "AllegPanel::SetXPChange detour",
-                    rollbackErrors);
-                TryFlushRollback(
-                    processHandle,
-                    allegPanelAddress,
-                    OriginalAllegPanelPrologue.Length,
-                    "AllegPanel::SetXPChange rollback",
-                    rollbackErrors);
-            }
-
-            if (setTextPatchAttempted)
-            {
-                var originalSetText = profile.XpLabel.OriginalSetTextPrologue;
-                TryRollback(
-                    processHandle,
-                    setTextAddress,
-                    originalSetText,
-                    "TextRegion::SetText detour",
-                    rollbackErrors);
-                TryFlushRollback(
-                    processHandle,
-                    setTextAddress,
-                    originalSetText.Length,
-                    "TextRegion::SetText rollback",
                     rollbackErrors);
             }
 
