@@ -13,7 +13,7 @@
 
 #define MyAppName "Aetherium Launcher"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.27"
+#define MyAppVersion "1.0.28"
 #endif
 #define MyAppPublisher "Vanquish (aka Chosen One)"
 #define MyAppExeName "AetheriumLauncher.exe"

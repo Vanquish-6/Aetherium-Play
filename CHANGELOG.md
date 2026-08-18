@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.28 - 2026-08-18
+
+### Fixed
+
+- Open panels that rewrite unchanged numbers hitch because those writers
+  still call `ClearAllText`. 1.0.28 skips that rebuild when the integer is
+  already on the widget: `TextRegion::SetInt` (signed and unsigned) compares
+  glyphs to `%d`/`%u` without calling `GetText`, `StatRegion::SetInt` skips
+  unchanged total-XP comma labels, `InfoBox::SetAvailable` skips the
+  unchanged unassigned-XP number and its static label while still running
+  `SetParent`, and `AllegPanel::SetXPChange` skips unchanged allegiance
+  numbers. Global `TextRegion::SetText` stays stock so launch matches 1.0.27.
+  Buff-duration skipping and DDD drain hooks are unchanged.
+
 ## 1.0.27 - 2026-08-18
 
 ### Fixed

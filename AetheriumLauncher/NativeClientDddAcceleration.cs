@@ -61,34 +61,71 @@ internal sealed class NativeClientSpellRegionHook
 internal sealed class NativeClientXpLabelHook
 {
     internal NativeClientXpLabelHook(
-        uint setTextRva,
-        byte[] expectedSetTextSignature,
+        uint setIntSignedRva,
+        byte[] expectedSetIntSignedSignature,
+        uint setIntUnsignedRva,
+        byte[] expectedSetIntUnsignedSignature,
+        uint statRegionSetIntRva,
+        byte[] expectedStatRegionSignature,
+        uint infoBoxSetAvailableRva,
+        byte[] expectedInfoBoxSignature,
+        uint infoBoxSetParentTailRva,
         uint allegPanelSetXpChangeRva,
         byte[] expectedAllegPanelSignature)
     {
-        SetTextRva = setTextRva;
-        ExpectedSetTextSignature = (byte[])expectedSetTextSignature.Clone();
+        SetIntSignedRva = setIntSignedRva;
+        ExpectedSetIntSignedSignature = (byte[])expectedSetIntSignedSignature.Clone();
+        SetIntUnsignedRva = setIntUnsignedRva;
+        ExpectedSetIntUnsignedSignature = (byte[])expectedSetIntUnsignedSignature.Clone();
+        StatRegionSetIntRva = statRegionSetIntRva;
+        ExpectedStatRegionSignature = (byte[])expectedStatRegionSignature.Clone();
+        InfoBoxSetAvailableRva = infoBoxSetAvailableRva;
+        ExpectedInfoBoxSignature = (byte[])expectedInfoBoxSignature.Clone();
+        InfoBoxSetParentTailRva = infoBoxSetParentTailRva;
         AllegPanelSetXpChangeRva = allegPanelSetXpChangeRva;
         ExpectedAllegPanelSignature = (byte[])expectedAllegPanelSignature.Clone();
     }
 
-    internal uint SetTextRva { get; }
+    internal uint SetIntSignedRva { get; }
 
-    internal byte[] ExpectedSetTextSignature { get; }
+    internal byte[] ExpectedSetIntSignedSignature { get; }
 
-    internal byte[] OriginalSetTextPrologue
-    {
-        get
-        {
-            var prologue = new byte[NativeClientDddAcceleration.StolenDetourLength];
-            ExpectedSetTextSignature.AsSpan(0, prologue.Length).CopyTo(prologue);
-            return prologue;
-        }
-    }
+    internal byte[] OriginalSetIntSignedPrologue =>
+        StolenPrologue(ExpectedSetIntSignedSignature, NativeClientDddAcceleration.StolenDetourLength);
+
+    internal uint SetIntUnsignedRva { get; }
+
+    internal byte[] ExpectedSetIntUnsignedSignature { get; }
+
+    internal byte[] OriginalSetIntUnsignedPrologue =>
+        StolenPrologue(ExpectedSetIntUnsignedSignature, NativeClientDddAcceleration.StolenDetourLength);
+
+    internal uint StatRegionSetIntRva { get; }
+
+    internal byte[] ExpectedStatRegionSignature { get; }
+
+    internal byte[] OriginalStatRegionPrologue =>
+        StolenPrologue(ExpectedStatRegionSignature, NativeClientDddAcceleration.StolenDetourLength);
+
+    internal uint InfoBoxSetAvailableRva { get; }
+
+    internal byte[] ExpectedInfoBoxSignature { get; }
+
+    internal byte[] OriginalInfoBoxPrologue =>
+        StolenPrologue(ExpectedInfoBoxSignature, NativeClientDddAcceleration.InfoBoxStolenLength);
+
+    internal uint InfoBoxSetParentTailRva { get; }
 
     internal uint AllegPanelSetXpChangeRva { get; }
 
     internal byte[] ExpectedAllegPanelSignature { get; }
+
+    private static byte[] StolenPrologue(byte[] signature, int length)
+    {
+        var prologue = new byte[length];
+        signature.AsSpan(0, length).CopyTo(prologue);
+        return prologue;
+    }
 }
 
 internal sealed class NativeClientDddAccelerationProfile
@@ -174,10 +211,11 @@ internal sealed class NativeClientDddAccelerationInstallation
 /// Two CLCache detours drain inbound DAT work faster and hold the patch UI
 /// incomplete until both writers are idle. A third detour replaces
 /// SpellRegion::Update so open buff/debuff duration labels skip ClearAllText
-/// when the m:ss string is unchanged. Global TextRegion::SetText and
-/// AllegPanel::SetXPChange detours are generated for tests but are not
-/// installed: 1.0.26 hooked them for XP-label hitch skipping and that
-/// prevented the client from opening.
+/// when the m:ss string is unchanged. Number-panel hitch skips hook the
+/// integer writers that already have the value (TextRegion::SetInt signed
+/// and unsigned, StatRegion::SetInt, InfoBox::SetAvailable, and
+/// AllegPanel::SetXPChange). Global TextRegion::SetText stays stock: 1.0.26
+/// detoured it and that prevented the client from opening.
 ///
 /// The verified retail layout exposes each Asynch_Cache pending-request count
 /// at +0x60. Inbound consumption pauses when either writer reaches the
@@ -229,24 +267,47 @@ internal static class NativeClientDddAcceleration
     internal const uint AdminSprintfIatRva = 0x0023_03F4;
     internal const uint AllegPanelSetXpChangeRva = 0x000B_CA90;
     internal const uint AdminAllegPanelSetXpChangeRva = 0x000C_4250;
+    internal const uint TextRegionSetIntSignedRva = 0x0001_D7C0;
+    internal const uint TextRegionSetIntUnsignedRva = 0x0001_D810;
+    internal const uint AdminTextRegionSetIntSignedRva = 0x0002_0250;
+    internal const uint AdminTextRegionSetIntUnsignedRva = 0x0002_02A0;
+    internal const uint StatRegionSetIntRva = 0x000C_F260;
+    internal const uint AdminStatRegionSetIntRva = 0x000D_6A70;
+    internal const uint InfoBoxSetAvailableRva = 0x000C_F7D0;
+    internal const uint AdminInfoBoxSetAvailableRva = 0x000D_6FE0;
+    internal const uint InfoBoxSetParentTailRva = 0x000C_F8D2;
+    internal const uint AdminInfoBoxSetParentTailRva = 0x000D_70E2;
     internal const int UseTimeTrampolineOffset = 0x80;
     internal const int DownloadStatusWrapperOffset = 0xA0;
     internal const int SpellRegionWrapperOffset = 0x100;
-    internal const int SetTextWrapperOffset = 0x280;
-    internal const int SetTextTrampolineOffset = 0x360;
-    internal const int AllegPanelWrapperOffset = 0x380;
-    internal const int AllegPanelTrampolineOffset = 0x3E0;
-    internal const int RemoteCodeSize = 0x420;
+    internal const int SetIntSignedWrapperOffset = 0x280;
+    internal const int SetIntSignedTrampolineOffset = 0x400;
+    internal const int SetIntUnsignedWrapperOffset = 0x410;
+    internal const int SetIntUnsignedTrampolineOffset = 0x590;
+    internal const int StatRegionWrapperOffset = 0x5A0;
+    internal const int StatRegionTrampolineOffset = 0x5E0;
+    internal const int InfoBoxWrapperOffset = 0x5F0;
+    internal const int InfoBoxTrampolineOffset = 0x640;
+    internal const int AllegPanelWrapperOffset = 0x650;
+    internal const int AllegPanelTrampolineOffset = 0x6B0;
+    internal const int RemoteCodeSize = 0x700;
     internal const int StolenDetourLength = 8;
+    internal const int InfoBoxStolenLength = 5;
     internal const string CapabilityVersion = "2005.02.A09";
     internal const int TextRegionFontOffset = 0xC8;
     internal const int TextRegionLineCountOffset = 0x10C;
     internal const int TextRegionLineBuffOffset = 0x110;
     internal const int GlyphStringHeadOffset = 4;
     internal const int GlyphFontOffset = 0x14;
+    internal const int GlyphTypeOffset = 4;
+    internal const int GlyphCharOffset = 8;
     internal const int AllegPanelXpAvailOffset = 0xC8;
     internal const int AllegPanelLevelOffset = 0xCC;
     internal const int AllegPanelPatronIdOffset = 0xD4;
+    internal const int StatRegionXpTotalWidgetOffset = 0xBC;
+    internal const int StatRegionXpTotalOffset = 0xDC;
+    internal const int InfoBoxAvailableOffset = 0xBC;
+    internal const uint TotalExperienceQuality = 0x15;
 
     private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
@@ -287,20 +348,68 @@ internal static class NativeClientDddAcceleration
         0xC0, 0x0F, 0x84, 0xBD, 0x00, 0x00, 0x00, 0xB9,
     ];
 
-    private static readonly byte[] PublicExpectedSetTextSignature =
+    private static readonly byte[] PublicExpectedSetIntSignedSignature =
     [
-        0x56, 0x8B, 0xF1, 0xE8, 0xF8, 0xE1, 0xFF, 0xFF,
-        0x8B, 0x4C, 0x24, 0x14, 0x8B, 0x54, 0x24, 0x10,
-        0x8B, 0x06, 0x51, 0x8B, 0x4C, 0x24, 0x10, 0x52,
-        0x8B, 0x54, 0x24, 0x10, 0x51, 0x52, 0x8B, 0xCE,
+        0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x14, 0x56,
+        0x50, 0x8B, 0xF1, 0x8D, 0x4C, 0x24, 0x08, 0x68,
+        0x40, 0xA9, 0x5E, 0x00, 0x51, 0xFF, 0x15, 0x28,
+        0x93, 0x5E, 0x00, 0x83, 0xC4, 0x0C, 0x8B, 0xCE,
     ];
 
-    private static readonly byte[] AdminExpectedSetTextSignature =
+    private static readonly byte[] PublicExpectedSetIntUnsignedSignature =
     [
-        0x56, 0x8B, 0xF1, 0xE8, 0xD8, 0xE1, 0xFF, 0xFF,
-        0x8B, 0x4C, 0x24, 0x14, 0x8B, 0x54, 0x24, 0x10,
-        0x8B, 0x06, 0x51, 0x8B, 0x4C, 0x24, 0x10, 0x52,
-        0x8B, 0x54, 0x24, 0x10, 0x51, 0x52, 0x8B, 0xCE,
+        0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x14, 0x56,
+        0x50, 0x8B, 0xF1, 0x8D, 0x4C, 0x24, 0x08, 0x68,
+        0xEC, 0xC7, 0x5E, 0x00, 0x51, 0xFF, 0x15, 0x28,
+        0x93, 0x5E, 0x00, 0x83, 0xC4, 0x0C, 0x8B, 0xCE,
+    ];
+
+    private static readonly byte[] AdminExpectedSetIntSignedSignature =
+    [
+        0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x14, 0x56,
+        0x50, 0x8B, 0xF1, 0x8D, 0x4C, 0x24, 0x08, 0x68,
+        0xF0, 0x19, 0x63, 0x00, 0x51, 0xFF, 0x15, 0xF4,
+        0x03, 0x63, 0x00, 0x83, 0xC4, 0x0C, 0x8B, 0xCE,
+    ];
+
+    private static readonly byte[] AdminExpectedSetIntUnsignedSignature =
+    [
+        0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x14, 0x56,
+        0x50, 0x8B, 0xF1, 0x8D, 0x4C, 0x24, 0x08, 0x68,
+        0x40, 0x42, 0x63, 0x00, 0x51, 0xFF, 0x15, 0xF4,
+        0x03, 0x63, 0x00, 0x83, 0xC4, 0x0C, 0x8B, 0xCE,
+    ];
+
+    private static readonly byte[] PublicExpectedStatRegionSignature =
+    [
+        0x51, 0xA1, 0x68, 0xCC, 0x7E, 0x00, 0x53, 0x55,
+        0x56, 0x89, 0x44, 0x24, 0x0C, 0x57, 0x83, 0xC0,
+        0x04, 0x50, 0x8B, 0xF1, 0xFF, 0x15, 0xE0, 0x91,
+        0x5E, 0x00, 0x8B, 0x44, 0x24, 0x18, 0x83, 0xC0,
+    ];
+
+    private static readonly byte[] AdminExpectedStatRegionSignature =
+    [
+        0x51, 0xA1, 0x70, 0x93, 0x93, 0x00, 0x53, 0x55,
+        0x56, 0x89, 0x44, 0x24, 0x0C, 0x57, 0x83, 0xC0,
+        0x04, 0x50, 0x8B, 0xF1, 0xFF, 0x15, 0x24, 0x02,
+        0x63, 0x00, 0x8B, 0x44, 0x24, 0x18, 0x83, 0xC0,
+    ];
+
+    private static readonly byte[] PublicExpectedInfoBoxSignature =
+    [
+        0x51, 0x8B, 0x44, 0x24, 0x08, 0x56, 0x8B, 0xF1,
+        0x3B, 0x86, 0xB8, 0x00, 0x00, 0x00, 0x57, 0x89,
+        0x86, 0xBC, 0x00, 0x00, 0x00, 0x72, 0x0E, 0x8B,
+        0x0D, 0x14, 0xD3, 0x68, 0x00, 0x8B, 0x89, 0x30,
+    ];
+
+    private static readonly byte[] AdminExpectedInfoBoxSignature =
+    [
+        0x51, 0x8B, 0x44, 0x24, 0x08, 0x56, 0x8B, 0xF1,
+        0x3B, 0x86, 0xB8, 0x00, 0x00, 0x00, 0x57, 0x89,
+        0x86, 0xBC, 0x00, 0x00, 0x00, 0x72, 0x0E, 0x8B,
+        0x0D, 0xA4, 0x92, 0x7D, 0x00, 0x8B, 0x89, 0x30,
     ];
 
     private static readonly byte[] PublicExpectedAllegPanelSignature =
@@ -332,6 +441,16 @@ internal static class NativeClientDddAcceleration
     private static readonly byte[] OriginalAllegPanelPrologue =
     [
         0x83, 0xEC, 0x0C, 0x53, 0x55, 0x56, 0x8B, 0xF1,
+    ];
+
+    private static readonly byte[] OriginalSetIntPrologue =
+    [
+        0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x14, 0x56,
+    ];
+
+    private static readonly byte[] OriginalInfoBoxPrologue =
+    [
+        0x51, 0x8B, 0x44, 0x24, 0x08,
     ];
 
     // Stock SpellRegion::Update _ftol2 pair constants (IEEE doubles).
@@ -414,8 +533,15 @@ internal static class NativeClientDddAcceleration
             TextRegionSetTextRva,
             SprintfIatRva),
         new NativeClientXpLabelHook(
-            TextRegionSetTextRva,
-            PublicExpectedSetTextSignature,
+            TextRegionSetIntSignedRva,
+            PublicExpectedSetIntSignedSignature,
+            TextRegionSetIntUnsignedRva,
+            PublicExpectedSetIntUnsignedSignature,
+            StatRegionSetIntRva,
+            PublicExpectedStatRegionSignature,
+            InfoBoxSetAvailableRva,
+            PublicExpectedInfoBoxSignature,
+            InfoBoxSetParentTailRva,
             AllegPanelSetXpChangeRva,
             PublicExpectedAllegPanelSignature));
 
@@ -443,8 +569,15 @@ internal static class NativeClientDddAcceleration
             AdminTextRegionSetTextRva,
             AdminSprintfIatRva),
         new NativeClientXpLabelHook(
-            AdminTextRegionSetTextRva,
-            AdminExpectedSetTextSignature,
+            AdminTextRegionSetIntSignedRva,
+            AdminExpectedSetIntSignedSignature,
+            AdminTextRegionSetIntUnsignedRva,
+            AdminExpectedSetIntUnsignedSignature,
+            AdminStatRegionSetIntRva,
+            AdminExpectedStatRegionSignature,
+            AdminInfoBoxSetAvailableRva,
+            AdminExpectedInfoBoxSignature,
+            AdminInfoBoxSetParentTailRva,
             AdminAllegPanelSetXpChangeRva,
             AdminExpectedAllegPanelSignature));
 
@@ -519,6 +652,16 @@ internal static class NativeClientDddAcceleration
             profile.PreferredImageBase + profile.DownloadStatusTailRva);
         var spellRegionAddress = Address(
             profile.PreferredImageBase + profile.SpellRegion.UpdateRva);
+        var setIntSignedAddress = Address(
+            profile.PreferredImageBase + profile.XpLabel.SetIntSignedRva);
+        var setIntUnsignedAddress = Address(
+            profile.PreferredImageBase + profile.XpLabel.SetIntUnsignedRva);
+        var statRegionAddress = Address(
+            profile.PreferredImageBase + profile.XpLabel.StatRegionSetIntRva);
+        var infoBoxAddress = Address(
+            profile.PreferredImageBase + profile.XpLabel.InfoBoxSetAvailableRva);
+        var allegPanelAddress = Address(
+            profile.PreferredImageBase + profile.XpLabel.AllegPanelSetXpChangeRva);
         var versionAddress = Address(profile.PreferredImageBase + profile.VersionLiteralRva);
         VerifyRemoteBytes(
             processHandle,
@@ -535,6 +678,31 @@ internal static class NativeClientDddAcceleration
             spellRegionAddress,
             profile.SpellRegion.ExpectedSignature,
             "SpellRegion::Update");
+        VerifyRemoteBytes(
+            processHandle,
+            setIntSignedAddress,
+            profile.XpLabel.ExpectedSetIntSignedSignature,
+            "TextRegion::SetInt signed");
+        VerifyRemoteBytes(
+            processHandle,
+            setIntUnsignedAddress,
+            profile.XpLabel.ExpectedSetIntUnsignedSignature,
+            "TextRegion::SetInt unsigned");
+        VerifyRemoteBytes(
+            processHandle,
+            statRegionAddress,
+            profile.XpLabel.ExpectedStatRegionSignature,
+            "StatRegion::SetInt");
+        VerifyRemoteBytes(
+            processHandle,
+            infoBoxAddress,
+            profile.XpLabel.ExpectedInfoBoxSignature,
+            "InfoBox::SetAvailable");
+        VerifyRemoteBytes(
+            processHandle,
+            allegPanelAddress,
+            profile.XpLabel.ExpectedAllegPanelSignature,
+            "AllegPanel::SetXPChange");
         VerifyRemoteBytes(
             processHandle,
             versionAddress,
@@ -556,6 +724,11 @@ internal static class NativeClientDddAcceleration
         var useTimePatchAttempted = false;
         var downloadStatusPatchAttempted = false;
         var spellRegionPatchAttempted = false;
+        var setIntSignedPatchAttempted = false;
+        var setIntUnsignedPatchAttempted = false;
+        var statRegionPatchAttempted = false;
+        var infoBoxPatchAttempted = false;
+        var allegPanelPatchAttempted = false;
         var versionPatchAttempted = false;
         try
         {
@@ -621,6 +794,81 @@ internal static class NativeClientDddAcceleration
                 (nuint)spellRegionPatch.Length,
                 "SpellRegion::Update detour");
 
+            var setIntSignedPatch = BuildStolenDetourPatch(
+                setIntSignedAddress,
+                Add(remoteCode, SetIntSignedWrapperOffset));
+            setIntSignedPatchAttempted = true;
+            WriteProtectedExact(
+                processHandle,
+                setIntSignedAddress,
+                setIntSignedPatch,
+                "TextRegion::SetInt signed detour");
+            FlushExact(
+                processHandle,
+                setIntSignedAddress,
+                (nuint)setIntSignedPatch.Length,
+                "TextRegion::SetInt signed detour");
+
+            var setIntUnsignedPatch = BuildStolenDetourPatch(
+                setIntUnsignedAddress,
+                Add(remoteCode, SetIntUnsignedWrapperOffset));
+            setIntUnsignedPatchAttempted = true;
+            WriteProtectedExact(
+                processHandle,
+                setIntUnsignedAddress,
+                setIntUnsignedPatch,
+                "TextRegion::SetInt unsigned detour");
+            FlushExact(
+                processHandle,
+                setIntUnsignedAddress,
+                (nuint)setIntUnsignedPatch.Length,
+                "TextRegion::SetInt unsigned detour");
+
+            var statRegionPatch = BuildStolenDetourPatch(
+                statRegionAddress,
+                Add(remoteCode, StatRegionWrapperOffset));
+            statRegionPatchAttempted = true;
+            WriteProtectedExact(
+                processHandle,
+                statRegionAddress,
+                statRegionPatch,
+                "StatRegion::SetInt detour");
+            FlushExact(
+                processHandle,
+                statRegionAddress,
+                (nuint)statRegionPatch.Length,
+                "StatRegion::SetInt detour");
+
+            var infoBoxPatch = BuildNearJumpPatch(
+                infoBoxAddress,
+                Add(remoteCode, InfoBoxWrapperOffset));
+            infoBoxPatchAttempted = true;
+            WriteProtectedExact(
+                processHandle,
+                infoBoxAddress,
+                infoBoxPatch,
+                "InfoBox::SetAvailable detour");
+            FlushExact(
+                processHandle,
+                infoBoxAddress,
+                (nuint)infoBoxPatch.Length,
+                "InfoBox::SetAvailable detour");
+
+            var allegPanelPatch = BuildStolenDetourPatch(
+                allegPanelAddress,
+                Add(remoteCode, AllegPanelWrapperOffset));
+            allegPanelPatchAttempted = true;
+            WriteProtectedExact(
+                processHandle,
+                allegPanelAddress,
+                allegPanelPatch,
+                "AllegPanel::SetXPChange detour");
+            FlushExact(
+                processHandle,
+                allegPanelAddress,
+                (nuint)allegPanelPatch.Length,
+                "AllegPanel::SetXPChange detour");
+
             // The server echoes this exact same-length version in PacketTwo. The
             // client also compares PacketTwo against this literal, so the marker
             // advertises the fully-installed hooks without changing the legacy
@@ -636,7 +884,7 @@ internal static class NativeClientDddAcceleration
             var installation = new NativeClientDddAccelerationInstallation(
                 $"Accelerated DAT repair enabled ({CapabilityVersion}; {profile.Id}; up to " +
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active; " +
-                "SpellRegion duration-text hitch bypass active).",
+                "SpellRegion duration-text hitch bypass active; number-label hitch bypass active).",
                 profile,
                 [
                     new RemotePatchRegion(
@@ -655,6 +903,26 @@ internal static class NativeClientDddAcceleration
                         spellRegionAddress,
                         spellRegionPatch,
                         "installed SpellRegion::Update detour"),
+                    new RemotePatchRegion(
+                        setIntSignedAddress,
+                        setIntSignedPatch,
+                        "installed TextRegion::SetInt signed detour"),
+                    new RemotePatchRegion(
+                        setIntUnsignedAddress,
+                        setIntUnsignedPatch,
+                        "installed TextRegion::SetInt unsigned detour"),
+                    new RemotePatchRegion(
+                        statRegionAddress,
+                        statRegionPatch,
+                        "installed StatRegion::SetInt detour"),
+                    new RemotePatchRegion(
+                        infoBoxAddress,
+                        infoBoxPatch,
+                        "installed InfoBox::SetAvailable detour"),
+                    new RemotePatchRegion(
+                        allegPanelAddress,
+                        allegPanelPatch,
+                        "installed AllegPanel::SetXPChange detour"),
                     new RemotePatchRegion(
                         versionAddress,
                         CapabilityVersionLiteral,
@@ -675,6 +943,86 @@ internal static class NativeClientDddAcceleration
                     versionAddress,
                     profile.OriginalVersionLiteral,
                     "client version marker",
+                    rollbackErrors);
+            }
+
+            if (allegPanelPatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    allegPanelAddress,
+                    OriginalAllegPanelPrologue,
+                    "AllegPanel::SetXPChange detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    allegPanelAddress,
+                    OriginalAllegPanelPrologue.Length,
+                    "AllegPanel::SetXPChange rollback",
+                    rollbackErrors);
+            }
+
+            if (infoBoxPatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    infoBoxAddress,
+                    OriginalInfoBoxPrologue,
+                    "InfoBox::SetAvailable detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    infoBoxAddress,
+                    OriginalInfoBoxPrologue.Length,
+                    "InfoBox::SetAvailable rollback",
+                    rollbackErrors);
+            }
+
+            if (statRegionPatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    statRegionAddress,
+                    profile.XpLabel.OriginalStatRegionPrologue,
+                    "StatRegion::SetInt detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    statRegionAddress,
+                    StolenDetourLength,
+                    "StatRegion::SetInt rollback",
+                    rollbackErrors);
+            }
+
+            if (setIntUnsignedPatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    setIntUnsignedAddress,
+                    OriginalSetIntPrologue,
+                    "TextRegion::SetInt unsigned detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    setIntUnsignedAddress,
+                    OriginalSetIntPrologue.Length,
+                    "TextRegion::SetInt unsigned rollback",
+                    rollbackErrors);
+            }
+
+            if (setIntSignedPatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    setIntSignedAddress,
+                    OriginalSetIntPrologue,
+                    "TextRegion::SetInt signed detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    setIntSignedAddress,
+                    OriginalSetIntPrologue.Length,
+                    "TextRegion::SetInt signed rollback",
                     rollbackErrors);
             }
 
@@ -835,70 +1183,140 @@ internal static class NativeClientDddAcceleration
 
         var spellRegionAddress = Add(remoteCodeAddress, SpellRegionWrapperOffset);
         var spellRegionWrapper = BuildSpellRegionWrapper(spellRegionAddress, profile);
-        if (SpellRegionWrapperOffset + spellRegionWrapper.Length > SetTextWrapperOffset)
-        {
-            throw new InvalidOperationException(
-                "The SpellRegion::Update wrapper overlaps the SetText wrapper.");
-        }
-
-        spellRegionWrapper.CopyTo(code, SpellRegionWrapperOffset);
-
-        var setTextWrapperAddress = Add(remoteCodeAddress, SetTextWrapperOffset);
-        var setTextTrampolineAddress = Add(remoteCodeAddress, SetTextTrampolineOffset);
-        var setTextWrapper = BuildSetTextWrapper(
-            setTextWrapperAddress,
-            setTextTrampolineAddress,
-            profile);
-        if (SetTextWrapperOffset + setTextWrapper.Length > SetTextTrampolineOffset)
-        {
-            throw new InvalidOperationException(
-                "The TextRegion::SetText wrapper overlaps its trampoline.");
-        }
-
-        setTextWrapper.CopyTo(code, SetTextWrapperOffset);
-
-        var setTextTrampoline = BuildSetTextTrampoline(
-            setTextTrampolineAddress,
-            profile);
-        if (SetTextTrampolineOffset + setTextTrampoline.Length > AllegPanelWrapperOffset)
-        {
-            throw new InvalidOperationException(
-                "The TextRegion::SetText trampoline overlaps the AllegPanel wrapper.");
-        }
-
-        setTextTrampoline.CopyTo(code, SetTextTrampolineOffset);
-
-        var allegPanelWrapperAddress = Add(remoteCodeAddress, AllegPanelWrapperOffset);
-        var allegPanelTrampolineAddress = Add(remoteCodeAddress, AllegPanelTrampolineOffset);
-        var allegPanelWrapper = BuildAllegPanelWrapper(
-            allegPanelWrapperAddress,
-            allegPanelTrampolineAddress);
-        if (AllegPanelWrapperOffset + allegPanelWrapper.Length > AllegPanelTrampolineOffset)
-        {
-            throw new InvalidOperationException(
-                "The AllegPanel::SetXPChange wrapper overlaps its trampoline.");
-        }
-
-        allegPanelWrapper.CopyTo(code, AllegPanelWrapperOffset);
-
-        OriginalAllegPanelPrologue.CopyTo(code, AllegPanelTrampolineOffset);
-        code[AllegPanelTrampolineOffset + OriginalAllegPanelPrologue.Length] = 0xE9;
-        WriteRelativeDisplacement(
+        PlaceWrapperAndTrampoline(
             code,
-            AllegPanelTrampolineOffset + OriginalAllegPanelPrologue.Length + 1,
-            Add(
-                remoteCodeAddress,
-                AllegPanelTrampolineOffset + OriginalAllegPanelPrologue.Length),
+            SpellRegionWrapperOffset,
+            SetIntSignedWrapperOffset,
+            SetIntSignedWrapperOffset,
+            spellRegionWrapper,
+            [],
+            "The SpellRegion::Update wrapper overlaps the signed SetInt wrapper.");
+
+        var numbers = profile.XpLabel;
+        PlaceStolenSlot(
+            code,
+            remoteCodeAddress,
+            SetIntSignedWrapperOffset,
+            SetIntSignedTrampolineOffset,
+            SetIntUnsignedWrapperOffset,
+            BuildSetIntWrapper(
+                Add(remoteCodeAddress, SetIntSignedWrapperOffset),
+                Add(remoteCodeAddress, SetIntSignedTrampolineOffset),
+                signed: true),
+            numbers.OriginalSetIntSignedPrologue,
+            Address(profile.PreferredImageBase + numbers.SetIntSignedRva + StolenDetourLength),
+            "signed TextRegion::SetInt");
+        PlaceStolenSlot(
+            code,
+            remoteCodeAddress,
+            SetIntUnsignedWrapperOffset,
+            SetIntUnsignedTrampolineOffset,
+            StatRegionWrapperOffset,
+            BuildSetIntWrapper(
+                Add(remoteCodeAddress, SetIntUnsignedWrapperOffset),
+                Add(remoteCodeAddress, SetIntUnsignedTrampolineOffset),
+                signed: false),
+            numbers.OriginalSetIntUnsignedPrologue,
+            Address(profile.PreferredImageBase + numbers.SetIntUnsignedRva + StolenDetourLength),
+            "unsigned TextRegion::SetInt");
+        PlaceStolenSlot(
+            code,
+            remoteCodeAddress,
+            StatRegionWrapperOffset,
+            StatRegionTrampolineOffset,
+            InfoBoxWrapperOffset,
+            BuildStatRegionWrapper(
+                Add(remoteCodeAddress, StatRegionWrapperOffset),
+                Add(remoteCodeAddress, StatRegionTrampolineOffset)),
+            numbers.OriginalStatRegionPrologue,
+            Address(profile.PreferredImageBase + numbers.StatRegionSetIntRva + StolenDetourLength),
+            "StatRegion::SetInt");
+        PlaceStolenSlot(
+            code,
+            remoteCodeAddress,
+            InfoBoxWrapperOffset,
+            InfoBoxTrampolineOffset,
+            AllegPanelWrapperOffset,
+            BuildInfoBoxWrapper(
+                Add(remoteCodeAddress, InfoBoxWrapperOffset),
+                Add(remoteCodeAddress, InfoBoxTrampolineOffset),
+                Address(profile.PreferredImageBase + numbers.InfoBoxSetParentTailRva)),
+            numbers.OriginalInfoBoxPrologue,
+            Address(profile.PreferredImageBase + numbers.InfoBoxSetAvailableRva + InfoBoxStolenLength),
+            "InfoBox::SetAvailable");
+        PlaceStolenSlot(
+            code,
+            remoteCodeAddress,
+            AllegPanelWrapperOffset,
+            AllegPanelTrampolineOffset,
+            code.Length,
+            BuildAllegPanelWrapper(
+                Add(remoteCodeAddress, AllegPanelWrapperOffset),
+                Add(remoteCodeAddress, AllegPanelTrampolineOffset)),
+            OriginalAllegPanelPrologue,
             Address(
-                profile.PreferredImageBase + profile.XpLabel.AllegPanelSetXpChangeRva +
-                StolenDetourLength));
-        if (AllegPanelTrampolineOffset + OriginalAllegPanelPrologue.Length + 5 > code.Length)
-        {
-            throw new InvalidOperationException(
-                "The AllegPanel::SetXPChange trampoline exceeds the remote-code allocation.");
-        }
+                profile.PreferredImageBase + numbers.AllegPanelSetXpChangeRva + StolenDetourLength),
+            "AllegPanel::SetXPChange");
 
         return code;
+    }
+
+    private static void PlaceWrapperAndTrampoline(
+        byte[] code,
+        int wrapperOffset,
+        int trampolineOffset,
+        int limitOffset,
+        byte[] wrapper,
+        byte[] trampoline,
+        string overlapMessage)
+    {
+        if (wrapperOffset + wrapper.Length > trampolineOffset)
+        {
+            throw new InvalidOperationException(overlapMessage);
+        }
+
+        wrapper.CopyTo(code, wrapperOffset);
+        if (trampoline.Length == 0)
+        {
+            return;
+        }
+
+        if (trampolineOffset + trampoline.Length > limitOffset)
+        {
+            throw new InvalidOperationException(overlapMessage);
+        }
+
+        trampoline.CopyTo(code, trampolineOffset);
+    }
+
+    private static void PlaceStolenSlot(
+        byte[] code,
+        IntPtr remoteCodeAddress,
+        int wrapperOffset,
+        int trampolineOffset,
+        int limitOffset,
+        byte[] wrapper,
+        byte[] stolenPrologue,
+        IntPtr continuation,
+        string name)
+    {
+        var trampoline = BuildStolenTrampoline(
+            Add(remoteCodeAddress, trampolineOffset),
+            stolenPrologue,
+            continuation);
+        PlaceWrapperAndTrampoline(
+            code,
+            wrapperOffset,
+            trampolineOffset,
+            limitOffset,
+            wrapper,
+            trampoline,
+            $"The {name} wrapper overlaps its trampoline.");
+        if (trampolineOffset + trampoline.Length > limitOffset)
+        {
+            throw new InvalidOperationException(
+                $"The {name} trampoline overlaps the next remote-code slot.");
+        }
     }
 
     private static byte[] BuildSpellRegionWrapper(
@@ -1102,65 +1520,33 @@ internal static class NativeClientDddAcceleration
         return data;
     }
 
-    private static byte[] BuildSetTextWrapper(
+    private static byte[] BuildSetIntWrapper(
         IntPtr wrapperAddress,
         IntPtr trampolineAddress,
-        NativeClientDddAccelerationProfile profile)
+        bool signed)
     {
-        ArgumentNullException.ThrowIfNull(profile);
         if (!BitConverter.IsLittleEndian)
         {
             throw new PlatformNotSupportedException(
-                "The TextRegion::SetText wrapper requires a little-endian host.");
+                "The TextRegion::SetInt wrapper requires a little-endian host.");
         }
-        var getText = Address(profile.PreferredImageBase + profile.SpellRegion.GetTextRva);
+
         var code = new X86CodeBuilder();
-        var relativeCalls = new List<(int DisplacementOffset, IntPtr Target)>();
-
-        void EmitCall(IntPtr target)
-        {
-            code.Emit(0xE8);
-            relativeCalls.Add((code.Position, target));
-            code.Emit(0, 0, 0, 0);
-        }
-
+        code.Emit(0x55);                                      // push ebp
+        code.Emit(0x8B, 0xEC);                                // mov ebp, esp
         code.Emit(0x56);                                      // push esi
+        code.Emit(0x57);                                      // push edi
         code.Emit(0x53);                                      // push ebx
         code.Emit(0x8B, 0xF1);                                // mov esi, ecx
-        code.Emit(0x8B, 0x44, 0x24, 0x14);                    // mov eax, [esp+14h] callback
-        code.Emit(0x0B, 0x44, 0x24, 0x18);                    // or eax, [esp+18h] flag
+        code.Emit(0x33, 0xFF);                                // xor edi, edi
+        code.Emit(0x8B, 0x45, 0x0C);                          // mov eax, [ebp+0Ch] font
+        code.Emit(0x0B, 0x45, 0x10);                          // or eax, [ebp+10h] callback
+        code.Emit(0x0B, 0x45, 0x14);                          // or eax, [ebp+14h] flag
         code.JumpIf(0x85, "original");                       // jnz original
-        code.Emit(0x8B, 0x44, 0x24, 0x0C);                    // mov eax, [esp+0Ch] text
-        code.Emit(0x85, 0xC0);                                // test eax, eax
-        code.JumpIf(0x84, "original");                       // jz original
-        code.Emit(0x8B, 0xCE);                                // mov ecx, esi
-        EmitCall(getText);
-        code.Emit(0x85, 0xC0);                                // test eax, eax
-        code.JumpIf(0x84, "original");                       // jz original
-        code.Emit(0x8B, 0x54, 0x24, 0x0C);                    // mov edx, [esp+0Ch] text
-
-        code.Mark("cmp_loop");
-        code.Emit(0x8A, 0x08);                                // mov cl, [eax]
-        code.Emit(0x3A, 0x0A);                                // cmp cl, [edx]
-        code.JumpIf(0x85, "original");                       // jne original
-        code.Emit(0x84, 0xC9);                                // test cl, cl
-        code.JumpIf(0x84, "equal");                          // jz equal
-        code.Emit(0x40);                                      // inc eax
-        code.Emit(0x42);                                      // inc edx
-        code.Jump("cmp_loop");
-
-        code.Mark("equal");
-        code.Emit(0x8B, 0x5C, 0x24, 0x10);                    // mov ebx, [esp+10h] font
-        code.Emit(0x85, 0xDB);                                // test ebx, ebx
-        code.JumpIf(0x85, "have_font");                      // jnz have_font
-        code.Emit(0x8B, 0x9E);                                // mov ebx, [esi+font]
-        code.Emit(BitConverter.GetBytes(TextRegionFontOffset));
-
-        code.Mark("have_font");
-        code.Emit(0x8B, 0x86);                                // mov eax, [esi+lineCount]
+        code.Emit(0x83, 0xBE);                                // cmp lineCount, 0
         code.Emit(BitConverter.GetBytes(TextRegionLineCountOffset));
-        code.Emit(0x85, 0xC0);                                // test eax, eax
-        code.JumpIf(0x84, "original");                       // jz original
+        code.Emit(0x00);
+        code.JumpIf(0x8E, "original");                       // jle original
         code.Emit(0x8B, 0x86);                                // mov eax, [esi+lineBuff]
         code.Emit(BitConverter.GetBytes(TextRegionLineBuffOffset));
         code.Emit(0x85, 0xC0);                                // test eax, eax
@@ -1168,36 +1554,89 @@ internal static class NativeClientDddAcceleration
         code.Emit(0x8B, 0x00);                                // mov eax, [eax]
         code.Emit(0x85, 0xC0);                                // test eax, eax
         code.JumpIf(0x84, "original");                       // jz original
-        code.Emit(0x8B, 0x40, (byte)GlyphStringHeadOffset);    // mov eax, [eax+4]
-        code.Emit(0x85, 0xC0);                                // test eax, eax
+        code.Emit(0x8B, 0x58, (byte)GlyphStringHeadOffset);    // mov ebx, [eax+4]
+        code.Emit(0x85, 0xDB);                                // test ebx, ebx
         code.JumpIf(0x84, "original");                       // jz original
-        code.Emit(0x3B, 0x58, (byte)GlyphFontOffset);          // cmp ebx, [eax+14h]
-        code.JumpIf(0x85, "original");                       // jne original
+        code.Emit(0x8B, 0x45, 0x08);                          // mov eax, [ebp+8] value
+
+        if (signed)
+        {
+            code.Emit(0x83, 0xF8, 0x00);                      // cmp eax, 0
+            code.JumpIf(0x8D, "magnitude");                   // jge magnitude
+            code.Emit(0x83, 0x7B, (byte)GlyphTypeOffset, 0);  // cmp [ebx+type], 0
+            code.JumpIf(0x85, "original");                    // jnz original
+            code.Emit(0x80, 0x7B, (byte)GlyphCharOffset, (byte)'-');
+            code.JumpIf(0x85, "original");                    // jnz original
+            code.Emit(0x8B, 0x1B);                            // mov ebx, [ebx]
+            code.Emit(0xF7, 0xD8);                            // neg eax
+        }
+
+        code.Mark("magnitude");
+        code.Emit(0x85, 0xC0);                                // test eax, eax
+        code.JumpIf(0x85, "div_loop");                       // jnz div_loop
+        code.Emit(0x6A, 0x00);                                // push 0
+        code.Emit(0x47);                                      // inc edi
+        code.Jump("cmp_loop");
+
+        code.Mark("div_loop");
+        code.Emit(0x33, 0xD2);                                // xor edx, edx
+        code.Emit(0xB9, 0x0A, 0, 0, 0);                       // mov ecx, 10
+        code.Emit(0xF7, 0xF1);                                // div ecx
+        code.Emit(0x52);                                      // push edx
+        code.Emit(0x47);                                      // inc edi
+        code.Emit(0x85, 0xC0);                                // test eax, eax
+        code.JumpIf(0x85, "div_loop");                       // jnz div_loop
+
+        code.Mark("cmp_loop");
+        code.Emit(0x85, 0xFF);                                // test edi, edi
+        code.JumpIf(0x84, "trail");                          // jz trail
+        code.Emit(0x85, 0xDB);                                // test ebx, ebx
+        code.JumpIf(0x84, "original");                       // jz original
+        code.Emit(0x83, 0x7B, (byte)GlyphTypeOffset, 0);      // cmp [ebx+type], 0
+        code.JumpIf(0x85, "original");                       // jnz original
+        code.Emit(0x58);                                      // pop eax
+        code.Emit(0x4F);                                      // dec edi
+        code.Emit(0x04, (byte)'0');                           // add al, '0'
+        code.Emit(0x38, 0x43, (byte)GlyphCharOffset);         // cmp [ebx+char], al
+        code.JumpIf(0x85, "original");                       // jnz original
+        code.Emit(0x8B, 0x1B);                                // mov ebx, [ebx]
+        code.Jump("cmp_loop");
+
+        code.Mark("trail");
+        code.Emit(0x85, 0xDB);                                // test ebx, ebx
+        code.JumpIf(0x84, "equal");                          // jz equal
+        code.Emit(0x83, 0x7B, (byte)GlyphTypeOffset, 0);      // cmp [ebx+type], 0
+        code.JumpIf(0x85, "original");                       // jnz original
+        code.Emit(0x80, 0x7B, (byte)GlyphCharOffset, 0x0A);   // cmp [ebx+char], '\n'
+        code.JumpIf(0x85, "original");                       // jnz original
+        code.Emit(0x8B, 0x1B);                                // mov ebx, [ebx]
+        code.Jump("trail");
+
+        code.Mark("equal");
         code.Emit(0x5B);                                      // pop ebx
+        code.Emit(0x5F);                                      // pop edi
         code.Emit(0x5E);                                      // pop esi
+        code.Emit(0x5D);                                      // pop ebp
         code.Emit(0xC2, 0x10, 0x00);                          // ret 10h
 
-        // GetText (thiscall) and the strcmp loop both clobber ecx. The stolen
-        // SetText prologue is `mov esi, ecx` / `call ClearAllText`, so the
-        // trampoline still needs the original TextRegion in ecx.
         code.Mark("original");
-        code.Emit(0x5B);                                      // pop ebx
+        code.Emit(0x85, 0xFF);                                // test edi, edi
+        code.JumpIf(0x84, "restore");                        // jz restore
+        code.Emit(0x58);                                      // pop eax
+        code.Emit(0x4F);                                      // dec edi
+        code.Jump("original");
+
+        code.Mark("restore");
         code.Emit(0x8B, 0xCE);                                // mov ecx, esi
+        code.Emit(0x5B);                                      // pop ebx
+        code.Emit(0x5F);                                      // pop edi
         code.Emit(0x5E);                                      // pop esi
+        code.Emit(0x5D);                                      // pop ebp
         code.Emit(0xE9);                                      // jmp trampoline
         var trampolineDisp = code.Position;
         code.Emit(0, 0, 0, 0);
 
         var wrapper = code.Build();
-        foreach (var (displacementOffset, target) in relativeCalls)
-        {
-            WriteRelativeDisplacement(
-                wrapper,
-                displacementOffset,
-                Add(wrapperAddress, displacementOffset - 1),
-                target);
-        }
-
         WriteRelativeDisplacement(
             wrapper,
             trampolineDisp,
@@ -1206,29 +1645,92 @@ internal static class NativeClientDddAcceleration
         return wrapper;
     }
 
-    private static byte[] BuildSetTextTrampoline(
-        IntPtr trampolineAddress,
-        NativeClientDddAccelerationProfile profile)
+    private static byte[] BuildStatRegionWrapper(
+        IntPtr wrapperAddress,
+        IntPtr trampolineAddress)
     {
-        ArgumentNullException.ThrowIfNull(profile);
-        var setTextAddress = Address(profile.PreferredImageBase + profile.XpLabel.SetTextRva);
-        var clearAllText = DecodeSetTextClearAllText(profile);
-        var trampoline = new byte[StolenDetourLength + 5];
-        trampoline[0] = 0x56;
-        trampoline[1] = 0x8B;
-        trampoline[2] = 0xF1;
-        trampoline[3] = 0xE8;
+        var code = new X86CodeBuilder();
+        code.Emit(0x83, 0x7C, 0x24, 0x04, (byte)TotalExperienceQuality);
+        code.JumpIf(0x85, "original");                       // jnz original
+        code.Emit(0x8B, 0x81);                                // mov eax, [ecx+iXPTotal]
+        code.Emit(BitConverter.GetBytes(StatRegionXpTotalOffset));
+        code.Emit(0x3B, 0x44, 0x24, 0x08);                    // cmp eax, [esp+8]
+        code.JumpIf(0x85, "original");                       // jne original
+        code.Emit(0x8B, 0x91);                                // mov edx, [ecx+xp_total]
+        code.Emit(BitConverter.GetBytes(StatRegionXpTotalWidgetOffset));
+        code.Emit(0x85, 0xD2);                                // test edx, edx
+        code.JumpIf(0x84, "original");                       // jz original
+        code.Emit(0x83, 0xBA);                                // cmp [edx+lineCount], 0
+        code.Emit(BitConverter.GetBytes(TextRegionLineCountOffset));
+        code.Emit(0x00);
+        code.JumpIf(0x8E, "original");                       // jle original
+        code.Emit(0xC2, 0x08, 0x00);                          // ret 8
+
+        code.Mark("original");
+        code.Emit(0xE9);                                      // jmp trampoline
+        var trampolineDisp = code.Position;
+        code.Emit(0, 0, 0, 0);
+
+        var wrapper = code.Build();
+        WriteRelativeDisplacement(
+            wrapper,
+            trampolineDisp,
+            Add(wrapperAddress, trampolineDisp - 1),
+            trampolineAddress);
+        return wrapper;
+    }
+
+    private static byte[] BuildInfoBoxWrapper(
+        IntPtr wrapperAddress,
+        IntPtr trampolineAddress,
+        IntPtr setParentTail)
+    {
+        var code = new X86CodeBuilder();
+        code.Emit(0x8B, 0x44, 0x24, 0x04);                    // mov eax, [esp+4]
+        code.Emit(0x3B, 0x81);                                // cmp eax, [ecx+iAvailable]
+        code.Emit(BitConverter.GetBytes(InfoBoxAvailableOffset));
+        code.JumpIf(0x85, "original");                       // jne original
+        code.Emit(0x51);                                      // push ecx
+        code.Emit(0x56);                                      // push esi
+        code.Emit(0x8B, 0xF1);                                // mov esi, ecx
+        code.Emit(0x57);                                      // push edi
+        code.Emit(0xE9);                                      // jmp SetParent tail
+        var tailDisp = code.Position;
+        code.Emit(0, 0, 0, 0);
+
+        code.Mark("original");
+        code.Emit(0xE9);                                      // jmp trampoline
+        var trampolineDisp = code.Position;
+        code.Emit(0, 0, 0, 0);
+
+        var wrapper = code.Build();
+        WriteRelativeDisplacement(
+            wrapper,
+            tailDisp,
+            Add(wrapperAddress, tailDisp - 1),
+            setParentTail);
+        WriteRelativeDisplacement(
+            wrapper,
+            trampolineDisp,
+            Add(wrapperAddress, trampolineDisp - 1),
+            trampolineAddress);
+        return wrapper;
+    }
+
+    private static byte[] BuildStolenTrampoline(
+        IntPtr trampolineAddress,
+        byte[] stolenPrologue,
+        IntPtr continuation)
+    {
+        ArgumentNullException.ThrowIfNull(stolenPrologue);
+        var trampoline = new byte[stolenPrologue.Length + 5];
+        stolenPrologue.CopyTo(trampoline, 0);
+        trampoline[stolenPrologue.Length] = 0xE9;
         WriteRelativeDisplacement(
             trampoline,
-            4,
-            Add(trampolineAddress, 3),
-            clearAllText);
-        trampoline[8] = 0xE9;
-        WriteRelativeDisplacement(
-            trampoline,
-            9,
-            Add(trampolineAddress, 8),
-            Add(setTextAddress, StolenDetourLength));
+            stolenPrologue.Length + 1,
+            Add(trampolineAddress, stolenPrologue.Length),
+            continuation);
         return trampoline;
     }
 
@@ -1266,25 +1768,6 @@ internal static class NativeClientDddAcceleration
             Add(wrapperAddress, trampolineDisp - 1),
             trampolineAddress);
         return wrapper;
-    }
-
-    private static IntPtr DecodeSetTextClearAllText(NativeClientDddAccelerationProfile profile)
-    {
-        var signature = profile.XpLabel.ExpectedSetTextSignature;
-        if (signature.Length < StolenDetourLength ||
-            signature[0] != 0x56 ||
-            signature[1] != 0x8B ||
-            signature[2] != 0xF1 ||
-            signature[3] != 0xE8)
-        {
-            throw new InvalidOperationException(
-                "TextRegion::SetText signature does not start with push esi / mov esi, ecx / call.");
-        }
-
-        var displacement = BinaryPrimitives.ReadInt32LittleEndian(signature.AsSpan(4, sizeof(int)));
-        var nextInstruction = (long)profile.PreferredImageBase + profile.XpLabel.SetTextRva +
-            StolenDetourLength;
-        return Address(unchecked((uint)(nextInstruction + displacement)));
     }
 
     private static byte[] BuildUseTimeWrapper(
@@ -1376,6 +1859,14 @@ internal static class NativeClientDddAcceleration
         return patch;
     }
 
+    internal static byte[] BuildNearJumpPatch(IntPtr sourceAddress, IntPtr wrapperAddress)
+    {
+        var patch = new byte[InfoBoxStolenLength];
+        patch[0] = 0xE9;
+        WriteRelativeDisplacement(patch, 1, sourceAddress, wrapperAddress);
+        return patch;
+    }
+
     internal static byte[] BuildDownloadStatusTailPatch(
         IntPtr downloadStatusTailAddress,
         IntPtr wrapperAddress)
@@ -1446,28 +1937,54 @@ internal static class NativeClientDddAcceleration
     internal static int SpellRegionWrapperLengthForTest(IntPtr remoteCodeAddress) =>
         SpellRegionWrapperForTest(remoteCodeAddress).Length;
 
-    internal static byte[] SetTextSignatureForTest() =>
-        (byte[])PublicExpectedSetTextSignature.Clone();
+    internal static byte[] OriginalSetIntPrologueForTest() =>
+        (byte[])OriginalSetIntPrologue.Clone();
 
-    internal static byte[] OriginalSetTextPrologueForTest() =>
-        PublicProfile.XpLabel.OriginalSetTextPrologue;
+    internal static byte[] OriginalInfoBoxPrologueForTest() =>
+        (byte[])OriginalInfoBoxPrologue.Clone();
 
     internal static byte[] OriginalAllegPanelPrologueForTest() =>
         (byte[])OriginalAllegPanelPrologue.Clone();
 
-    internal static byte[] SetTextWrapperForTest(IntPtr remoteCodeAddress) =>
-        BuildSetTextWrapper(
-            Add(remoteCodeAddress, SetTextWrapperOffset),
-            Add(remoteCodeAddress, SetTextTrampolineOffset),
-            PublicProfile);
+    internal static byte[] SetIntSignedSignatureForTest() =>
+        (byte[])PublicExpectedSetIntSignedSignature.Clone();
+
+    internal static byte[] SetIntUnsignedSignatureForTest() =>
+        (byte[])PublicExpectedSetIntUnsignedSignature.Clone();
+
+    internal static byte[] StatRegionSignatureForTest() =>
+        (byte[])PublicExpectedStatRegionSignature.Clone();
+
+    internal static byte[] InfoBoxSignatureForTest() =>
+        (byte[])PublicExpectedInfoBoxSignature.Clone();
+
+    internal static byte[] SetIntSignedWrapperForTest(IntPtr remoteCodeAddress) =>
+        BuildSetIntWrapper(
+            Add(remoteCodeAddress, SetIntSignedWrapperOffset),
+            Add(remoteCodeAddress, SetIntSignedTrampolineOffset),
+            signed: true);
+
+    internal static byte[] SetIntUnsignedWrapperForTest(IntPtr remoteCodeAddress) =>
+        BuildSetIntWrapper(
+            Add(remoteCodeAddress, SetIntUnsignedWrapperOffset),
+            Add(remoteCodeAddress, SetIntUnsignedTrampolineOffset),
+            signed: false);
+
+    internal static byte[] StatRegionWrapperForTest(IntPtr remoteCodeAddress) =>
+        BuildStatRegionWrapper(
+            Add(remoteCodeAddress, StatRegionWrapperOffset),
+            Add(remoteCodeAddress, StatRegionTrampolineOffset));
+
+    internal static byte[] InfoBoxWrapperForTest(IntPtr remoteCodeAddress) =>
+        BuildInfoBoxWrapper(
+            Add(remoteCodeAddress, InfoBoxWrapperOffset),
+            Add(remoteCodeAddress, InfoBoxTrampolineOffset),
+            Address(PreferredImageBase + InfoBoxSetParentTailRva));
 
     internal static byte[] AllegPanelWrapperForTest(IntPtr remoteCodeAddress) =>
         BuildAllegPanelWrapper(
             Add(remoteCodeAddress, AllegPanelWrapperOffset),
             Add(remoteCodeAddress, AllegPanelTrampolineOffset));
-
-    internal static IntPtr SetTextClearAllTextForTest() =>
-        DecodeSetTextClearAllText(PublicProfile);
 
     internal static byte[] DownloadStatusDrainWrapperForTest() =>
         (byte[])DownloadStatusDrainWrapper.Clone();

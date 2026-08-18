@@ -113,7 +113,7 @@ public static class ClientLauncher
                 vintageDecalDetail = "Injected vintage Decal 2.6.1.1 before client resume.";
             }
 
-            // Optional DLL injection must leave all five guarded A09 regions
+            // Optional DLL injection must leave all guarded A09 regions
             // intact. Any collision is refused while the client is suspended.
             NativeClientDddAcceleration.VerifyInstalled(
                 processHandle,
