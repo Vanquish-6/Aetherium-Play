@@ -90,6 +90,17 @@ BytesEqual(
     originalDownloadStatus,
     "download-status rollback bytes");
 
+var originalSpellRegion = NativeClientDddAcceleration.OriginalSpellRegionPrologueForTest();
+BytesEqual(
+    Convert.FromHexString("83EC18568BF1"),
+    originalSpellRegion,
+    "SpellRegion rollback bytes");
+
+BytesEqual(
+    Convert.FromHexString("83EC0C5355568BF1"),
+    NativeClientDddAcceleration.OriginalAllegPanelPrologueForTest(),
+    "AllegPanel rollback bytes");
+
 var originalVersion = NativeClientDddAcceleration.OriginalVersionForTest();
 var capabilityVersion = NativeClientDddAcceleration.CapabilityVersionForTest();
 Equal(12, originalVersion.Length, "original version literal length");
@@ -239,6 +250,7 @@ useTimeSignature[0] = 0;
 downloadStatusSignature[0] = 0;
 originalUseTime[0] = 0;
 originalDownloadStatus[0] = 0;
+originalSpellRegion[0] = 0;
 originalVersion[0] = 0;
 capabilityVersion[0] = 0;
 Equal((byte)0x55, NativeClientDddAcceleration.SupportedSignatureForTest()[0],
@@ -249,6 +261,12 @@ Equal((byte)0x55, NativeClientDddAcceleration.OriginalUseTimePrologueForTest()[0
     "UseTime rollback clone");
 Equal((byte)0x8B, NativeClientDddAcceleration.OriginalDownloadStatusTailForTest()[0],
     "download-status rollback clone");
+Equal((byte)0x83, NativeClientDddAcceleration.OriginalSpellRegionPrologueForTest()[0],
+    "SpellRegion rollback clone");
+Equal((byte)0x83, NativeClientDddAcceleration.OriginalAllegPanelPrologueForTest()[0],
+    "AllegPanel rollback clone");
+Equal((byte)0x56, NativeClientDddAcceleration.OriginalSetTextPrologueForTest()[0],
+    "SetText rollback clone");
 Equal((byte)'2', NativeClientDddAcceleration.OriginalVersionForTest()[0],
     "original-version clone");
 Equal((byte)'2', NativeClientDddAcceleration.CapabilityVersionForTest()[0],
@@ -339,19 +357,194 @@ Equal((byte)0x33,
     NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest()[0],
     "download-status wrapper clone");
 
+var spellSignature = NativeClientDddAcceleration.SpellRegionSignatureForTest();
+Equal(32, spellSignature.Length, "SpellRegion signature length");
+BytesEqual(
+    Convert.FromHexString(
+        "83EC18568BF18B8EC4000000E8FFA4F6FF8B86D400000085C00F84BD000000B9"),
+    spellSignature,
+    "public SpellRegion::Update signature");
+BytesEqual(
+    Convert.FromHexString("83EC18568BF1"),
+    NativeClientDddAcceleration.OriginalSpellRegionPrologueForTest(),
+    "SpellRegion rollback bytes");
+Equal(
+    NativeClientDddAcceleration.SpellRegionUpdateRva,
+    publicProfile.SpellRegion.UpdateRva,
+    "public SpellRegion RVA");
+Equal(
+    NativeClientDddAcceleration.SpellRegionUpdateFileOffset,
+    publicProfile.SpellRegion.UpdateFileOffset,
+    "public SpellRegion file offset");
+Equal(
+    NativeClientDddAcceleration.SpellRegionUpdateSize,
+    publicProfile.SpellRegion.UpdateSize,
+    "public SpellRegion size");
+Equal(NativeClientDddAcceleration.SpellDurationRva, publicProfile.SpellRegion.SpellDurationRva,
+    "public SpellDuration RVA");
+Equal(NativeClientDddAcceleration.TextRegionGetTextRva, publicProfile.SpellRegion.GetTextRva,
+    "public GetText RVA");
+Equal(NativeClientDddAcceleration.TextRegionSetTextRva, publicProfile.SpellRegion.SetTextRva,
+    "public SetText RVA");
+BytesEqual(spellSignature, publicProfile.SpellRegion.ExpectedSignature,
+    "public profile SpellRegion signature");
+spellSignature[0] = 0;
+Equal((byte)0x83, NativeClientDddAcceleration.SpellRegionSignatureForTest()[0],
+    "SpellRegion signature clone");
+BytesEqual(
+    Convert.FromHexString(
+        "83EC18568BF18B8EC4000000E8AF59F6FF8B86D400000085C00F84BD000000B9"),
+    adminProfile.SpellRegion.ExpectedSignature,
+    "admin profile SpellRegion signature");
+Equal(
+    NativeClientDddAcceleration.AdminSpellRegionUpdateRva,
+    adminProfile.SpellRegion.UpdateRva,
+    "admin SpellRegion RVA");
+Equal(
+    NativeClientDddAcceleration.SpellRegionUpdateSize,
+    adminProfile.SpellRegion.UpdateSize,
+    "admin SpellRegion size");
+
+var spellWrapper = NativeClientDddAcceleration.SpellRegionWrapperForTest(remoteBase);
+var spellWrapperLength =
+    NativeClientDddAcceleration.SpellRegionWrapperLengthForTest(remoteBase);
+Equal(spellWrapperLength, spellWrapper.Length, "SpellRegion wrapper length accessor");
+True(
+    NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength <=
+    NativeClientDddAcceleration.SetTextWrapperOffset,
+    "SpellRegion wrapper/SetText containment");
+BytesEqual(
+    spellWrapper,
+    remoteCode[
+        NativeClientDddAcceleration.SpellRegionWrapperOffset..
+        (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)],
+    "SpellRegion wrapper placement");
+spellWrapper[0] = 0;
+Equal((byte)0x55,
+    NativeClientDddAcceleration.SpellRegionWrapperForTest(remoteBase)[0],
+    "SpellRegion wrapper clone");
+
+var spellWrapperAddress =
+    IntPtr.Add(remoteBase, NativeClientDddAcceleration.SpellRegionWrapperOffset);
+var placedSpellWrapper = remoteCode[
+    NativeClientDddAcceleration.SpellRegionWrapperOffset..
+    (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)];
+var spellRelCalls = new List<IntPtr>();
+var spellAbsCalls = new List<IntPtr>();
+for (var i = 0; i + 5 < placedSpellWrapper.Length; i++)
+{
+    if (placedSpellWrapper[i] == 0xE8)
+    {
+        spellRelCalls.Add(
+            NativeClientDddAcceleration.DecodeRelativeTarget(
+                placedSpellWrapper,
+                i,
+                spellWrapperAddress));
+        i += 4;
+        continue;
+    }
+
+    if (placedSpellWrapper[i] == 0xFF && placedSpellWrapper[i + 1] == 0x15)
+    {
+        spellAbsCalls.Add(new IntPtr(unchecked((int)BinaryPrimitives.ReadUInt32LittleEndian(
+            placedSpellWrapper.AsSpan(i + 2, sizeof(int))))));
+        i += 5;
+    }
+}
+
+Equal(5, spellRelCalls.Count, "SpellRegion wrapper relative-call count");
+True(
+    spellRelCalls.Contains(new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.SpellDurationRva)))),
+    "SpellRegion wrapper calls SpellDuration");
+True(
+    spellRelCalls.Contains(new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.Ftol2Rva)))),
+    "SpellRegion wrapper calls _ftol2");
+Equal(
+    2,
+    spellRelCalls.Count(target => target == new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.Ftol2Rva)))),
+    "SpellRegion wrapper _ftol2 pair");
+True(
+    spellRelCalls.Contains(new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.TextRegionGetTextRva)))),
+    "SpellRegion wrapper calls GetText");
+True(
+    spellRelCalls.Contains(new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.TextRegionSetTextRva)))),
+    "SpellRegion wrapper calls SetText");
+Equal(1, spellAbsCalls.Count, "SpellRegion wrapper sprintf IAT count");
+Equal(
+    new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.SprintfIatRva))),
+    spellAbsCalls[0],
+    "SpellRegion wrapper sprintf IAT");
+
+var adminSpellWrapper = NativeClientDddAcceleration.BuildRemoteCode(remoteBase, adminProfile);
+var adminPlacedSpell = adminSpellWrapper[
+    NativeClientDddAcceleration.SpellRegionWrapperOffset..
+    (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)];
+var adminSpellRelCalls = new List<IntPtr>();
+for (var i = 0; i + 5 < adminPlacedSpell.Length; i++)
+{
+    if (adminPlacedSpell[i] == 0xE8)
+    {
+        adminSpellRelCalls.Add(
+            NativeClientDddAcceleration.DecodeRelativeTarget(
+                adminPlacedSpell,
+                i,
+                spellWrapperAddress));
+        i += 4;
+    }
+}
+
+True(
+    adminSpellRelCalls.Contains(new IntPtr(unchecked((int)(
+        adminProfile.PreferredImageBase + adminProfile.SpellRegion.GetTextRva)))),
+    "admin SpellRegion wrapper calls GetText");
+True(
+    adminSpellRelCalls.Contains(new IntPtr(unchecked((int)(
+        adminProfile.PreferredImageBase + adminProfile.SpellRegion.SetTextRva)))),
+    "admin SpellRegion wrapper calls SetText");
+True(
+    !spellRelCalls.Contains(new IntPtr(unchecked((int)(
+        adminProfile.PreferredImageBase + adminProfile.SpellRegion.GetTextRva)))),
+    "public SpellRegion wrapper does not use admin GetText");
+
 var trampolineEnd = trampoline + 6 + 5;
 True(trampolineEnd <= NativeClientDddAcceleration.DownloadStatusWrapperOffset,
     "trampoline/status-wrapper non-overlap");
 True(
     NativeClientDddAcceleration.DownloadStatusWrapperOffset +
         NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest().Length <=
-    NativeClientDddAcceleration.RemoteCodeSize,
-    "status-wrapper/allocation containment");
+    NativeClientDddAcceleration.SpellRegionWrapperOffset,
+    "status-wrapper/SpellRegion non-overlap");
+True(
+    NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength <=
+    NativeClientDddAcceleration.SetTextWrapperOffset,
+    "SpellRegion wrapper/SetText non-overlap");
 True(remoteCode[wrapperLength..trampoline].All(value => value == 0xCC),
     "wrapper/trampoline padding");
 True(remoteCode[trampolineEnd..NativeClientDddAcceleration.DownloadStatusWrapperOffset]
         .All(value => value == 0xCC),
     "trampoline/status-wrapper padding");
+var statusEnd = NativeClientDddAcceleration.DownloadStatusWrapperOffset +
+    NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest().Length;
+True(remoteCode[statusEnd..NativeClientDddAcceleration.SpellRegionWrapperOffset]
+        .All(value => value == 0xCC),
+    "status-wrapper/SpellRegion padding");
+True(remoteCode[
+        (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)..
+        NativeClientDddAcceleration.SetTextWrapperOffset]
+        .All(value => value == 0xCC),
+    "SpellRegion/SetText padding");
 
 var useTimeAddress = new IntPtr(unchecked((int)(
     NativeClientDddAcceleration.PreferredImageBase + NativeClientDddAcceleration.UseTimeRva)));
@@ -379,6 +572,22 @@ Equal(statusWrapperAddress,
         0,
         downloadStatusTailAddress),
     "download-status tail-detour target");
+
+var spellRegionAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.SpellRegionUpdateRva)));
+var spellRegionPatch = NativeClientDddAcceleration.BuildEntryPatch(
+    spellRegionAddress,
+    spellWrapperAddress);
+Equal(6, spellRegionPatch.Length, "SpellRegion entry detour length");
+Equal((byte)0xE9, spellRegionPatch[0], "SpellRegion entry JMP");
+Equal((byte)0x90, spellRegionPatch[5], "SpellRegion entry NOP");
+Equal(spellWrapperAddress,
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        spellRegionPatch,
+        0,
+        spellRegionAddress),
+    "SpellRegion entry-detour target");
 
 // Check the largest normal x86 user-mode allocation neighborhood too; every
 // absolute rel32 edge must still decode to the intended target.
@@ -412,6 +621,244 @@ Equal(highStatusWrapper,
         0,
         downloadStatusTailAddress),
     "high-address download-status detour");
+var highSpellWrapper =
+    IntPtr.Add(highRemoteBase, NativeClientDddAcceleration.SpellRegionWrapperOffset);
+var highSpellPatch = NativeClientDddAcceleration.BuildEntryPatch(
+    spellRegionAddress,
+    highSpellWrapper);
+Equal(highSpellWrapper,
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        highSpellPatch,
+        0,
+        spellRegionAddress),
+    "high-address SpellRegion detour");
+var highSpellPlaced = highRemoteCode[
+    NativeClientDddAcceleration.SpellRegionWrapperOffset..
+    (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)];
+True(
+    Enumerable.Range(0, highSpellPlaced.Length - 4).Any(index =>
+        highSpellPlaced[index] == 0xE8 &&
+        NativeClientDddAcceleration.DecodeRelativeTarget(
+            highSpellPlaced,
+            index,
+            highSpellWrapper) ==
+        new IntPtr(unchecked((int)(
+        NativeClientDddAcceleration.PreferredImageBase +
+        NativeClientDddAcceleration.TextRegionGetTextRva)))),
+    "high-address SpellRegion GetText call");
+
+var setTextSignature = NativeClientDddAcceleration.SetTextSignatureForTest();
+Equal(32, setTextSignature.Length, "SetText signature length");
+BytesEqual(
+    Convert.FromHexString(
+        "568BF1E8F8E1FFFF8B4C24148B5424108B06518B4C2410528B54241051528BCE"),
+    setTextSignature,
+    "public TextRegion::SetText signature");
+BytesEqual(
+    Convert.FromHexString("568BF1E8F8E1FFFF"),
+    NativeClientDddAcceleration.OriginalSetTextPrologueForTest(),
+    "public SetText stolen prologue");
+setTextSignature[0] = 0;
+Equal((byte)0x56, NativeClientDddAcceleration.SetTextSignatureForTest()[0],
+    "SetText signature clone");
+BytesEqual(
+    Convert.FromHexString(
+        "568BF1E8D8E1FFFF8B4C24148B5424108B06518B4C2410528B54241051528BCE"),
+    adminProfile.XpLabel.ExpectedSetTextSignature,
+    "admin TextRegion::SetText signature");
+Equal(
+    NativeClientDddAcceleration.TextRegionSetTextRva,
+    publicProfile.XpLabel.SetTextRva,
+    "public SetText RVA");
+Equal(
+    NativeClientDddAcceleration.AdminTextRegionSetTextRva,
+    adminProfile.XpLabel.SetTextRva,
+    "admin SetText RVA");
+Equal(
+    NativeClientDddAcceleration.AllegPanelSetXpChangeRva,
+    publicProfile.XpLabel.AllegPanelSetXpChangeRva,
+    "public AllegPanel::SetXPChange RVA");
+Equal(
+    NativeClientDddAcceleration.AdminAllegPanelSetXpChangeRva,
+    adminProfile.XpLabel.AllegPanelSetXpChangeRva,
+    "admin AllegPanel::SetXPChange RVA");
+BytesEqual(
+    Convert.FromHexString(
+        "83EC0C5355568BF18B0657FF50348B2D1CD368008B4C24248B5424208BF833C0"),
+    publicProfile.XpLabel.ExpectedAllegPanelSignature,
+    "public AllegPanel::SetXPChange signature");
+BytesEqual(
+    Convert.FromHexString(
+        "83EC0C5355568BF18B0657FF50348B2DAC927D008B4C24248B5424208BF833C0"),
+    adminProfile.XpLabel.ExpectedAllegPanelSignature,
+    "admin AllegPanel::SetXPChange signature");
+
+var setTextWrapper = NativeClientDddAcceleration.SetTextWrapperForTest(remoteBase);
+True(
+    NativeClientDddAcceleration.SetTextWrapperOffset + setTextWrapper.Length <=
+    NativeClientDddAcceleration.SetTextTrampolineOffset,
+    "SetText wrapper/trampoline non-overlap");
+BytesEqual(
+    setTextWrapper,
+    remoteCode[
+        NativeClientDddAcceleration.SetTextWrapperOffset..
+        (NativeClientDddAcceleration.SetTextWrapperOffset + setTextWrapper.Length)],
+    "SetText wrapper placement");
+setTextWrapper[0] = 0;
+Equal((byte)0x56,
+    NativeClientDddAcceleration.SetTextWrapperForTest(remoteBase)[0],
+    "SetText wrapper clone");
+
+var setTextWrapperAddress =
+    IntPtr.Add(remoteBase, NativeClientDddAcceleration.SetTextWrapperOffset);
+var setTextTrampolineAddress =
+    IntPtr.Add(remoteBase, NativeClientDddAcceleration.SetTextTrampolineOffset);
+var placedSetTextWrapper = remoteCode[
+    NativeClientDddAcceleration.SetTextWrapperOffset..
+    (NativeClientDddAcceleration.SetTextWrapperOffset + setTextWrapper.Length)];
+var setTextCallsGetText = false;
+var setTextJumpsTrampoline = false;
+for (var i = 0; i + 5 <= placedSetTextWrapper.Length; i++)
+{
+    if (placedSetTextWrapper[i] == 0xE8)
+    {
+        var target = NativeClientDddAcceleration.DecodeRelativeTarget(
+            placedSetTextWrapper,
+            i,
+            setTextWrapperAddress);
+        if (target == new IntPtr(unchecked((int)(
+            NativeClientDddAcceleration.PreferredImageBase +
+            NativeClientDddAcceleration.TextRegionGetTextRva))))
+        {
+            setTextCallsGetText = true;
+        }
+
+        i += 4;
+        continue;
+    }
+
+    if (placedSetTextWrapper[i] == 0xE9)
+    {
+        var target = NativeClientDddAcceleration.DecodeRelativeTarget(
+            placedSetTextWrapper,
+            i,
+            setTextWrapperAddress);
+        if (target == setTextTrampolineAddress)
+        {
+            setTextJumpsTrampoline = true;
+        }
+
+        i += 4;
+    }
+}
+
+True(setTextCallsGetText, "SetText wrapper calls GetText");
+True(setTextJumpsTrampoline, "SetText wrapper falls through to trampoline");
+True(
+    placedSetTextWrapper.AsSpan().IndexOf(
+        new byte[] { 0x5B, 0x8B, 0xCE, 0x5E, 0xE9 }) >= 0,
+    "SetText fallthrough restores ecx before the trampoline");
+
+var setTextAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.TextRegionSetTextRva)));
+var setTextPatch = NativeClientDddAcceleration.BuildStolenDetourPatch(
+    setTextAddress,
+    setTextWrapperAddress);
+Equal(8, setTextPatch.Length, "SetText entry detour length");
+Equal((byte)0xE9, setTextPatch[0], "SetText entry JMP");
+Equal((byte)0x90, setTextPatch[5], "SetText entry NOP");
+Equal((byte)0x90, setTextPatch[7], "SetText entry trailing NOP");
+Equal(setTextWrapperAddress,
+    NativeClientDddAcceleration.DecodeRelativeTarget(setTextPatch, 0, setTextAddress),
+    "SetText entry-detour target");
+
+var placedSetTextTrampoline = remoteCode[
+    NativeClientDddAcceleration.SetTextTrampolineOffset..
+    (NativeClientDddAcceleration.SetTextTrampolineOffset + 13)];
+BytesEqual(
+    Convert.FromHexString("568BF1"),
+    placedSetTextTrampoline[..3],
+    "SetText trampoline stolen prologue");
+Equal((byte)0xE8, placedSetTextTrampoline[3], "SetText trampoline ClearAllText CALL");
+Equal(
+    NativeClientDddAcceleration.SetTextClearAllTextForTest(),
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        placedSetTextTrampoline,
+        3,
+        setTextTrampolineAddress),
+    "SetText trampoline calls ClearAllText");
+Equal((byte)0xE9, placedSetTextTrampoline[8], "SetText trampoline continuation JMP");
+Equal(
+    IntPtr.Add(setTextAddress, NativeClientDddAcceleration.StolenDetourLength),
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        placedSetTextTrampoline,
+        8,
+        setTextTrampolineAddress),
+    "SetText trampoline continues at SetText+8");
+
+var allegPanelWrapper = NativeClientDddAcceleration.AllegPanelWrapperForTest(remoteBase);
+True(
+    NativeClientDddAcceleration.AllegPanelWrapperOffset + allegPanelWrapper.Length <=
+    NativeClientDddAcceleration.AllegPanelTrampolineOffset,
+    "AllegPanel wrapper/trampoline non-overlap");
+BytesEqual(
+    allegPanelWrapper,
+    remoteCode[
+        NativeClientDddAcceleration.AllegPanelWrapperOffset..
+        (NativeClientDddAcceleration.AllegPanelWrapperOffset + allegPanelWrapper.Length)],
+    "AllegPanel wrapper placement");
+
+var allegPanelAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.AllegPanelSetXpChangeRva)));
+var allegPanelWrapperAddress =
+    IntPtr.Add(remoteBase, NativeClientDddAcceleration.AllegPanelWrapperOffset);
+var allegPanelTrampolineAddress =
+    IntPtr.Add(remoteBase, NativeClientDddAcceleration.AllegPanelTrampolineOffset);
+var allegPanelPatch = NativeClientDddAcceleration.BuildStolenDetourPatch(
+    allegPanelAddress,
+    allegPanelWrapperAddress);
+Equal(allegPanelWrapperAddress,
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        allegPanelPatch,
+        0,
+        allegPanelAddress),
+    "AllegPanel entry-detour target");
+Equal(
+    IntPtr.Add(allegPanelAddress, NativeClientDddAcceleration.StolenDetourLength),
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        remoteCode,
+        NativeClientDddAcceleration.AllegPanelTrampolineOffset +
+            NativeClientDddAcceleration.OriginalAllegPanelPrologueForTest().Length,
+        remoteBase),
+    "AllegPanel trampoline continuation");
+
+var highSetTextWrapper =
+    IntPtr.Add(highRemoteBase, NativeClientDddAcceleration.SetTextWrapperOffset);
+var highSetTextPatch = NativeClientDddAcceleration.BuildStolenDetourPatch(
+    setTextAddress,
+    highSetTextWrapper);
+Equal(highSetTextWrapper,
+    NativeClientDddAcceleration.DecodeRelativeTarget(
+        highSetTextPatch,
+        0,
+        setTextAddress),
+    "high-address SetText detour");
+var highSetTextPlaced = highRemoteCode[
+    NativeClientDddAcceleration.SetTextWrapperOffset..
+    (NativeClientDddAcceleration.SetTextWrapperOffset + setTextWrapper.Length)];
+True(
+    Enumerable.Range(0, highSetTextPlaced.Length - 4).Any(index =>
+        highSetTextPlaced[index] == 0xE8 &&
+        NativeClientDddAcceleration.DecodeRelativeTarget(
+            highSetTextPlaced,
+            index,
+            highSetTextWrapper) ==
+        new IntPtr(unchecked((int)(
+            NativeClientDddAcceleration.PreferredImageBase +
+            NativeClientDddAcceleration.TextRegionGetTextRva)))),
+    "high-address SetText GetText call");
 
 var emptyStartupOptions = LauncherStartupOptions.Parse([]);
 True(emptyStartupOptions.GameInstallDirectory is null, "default UI install selection");
@@ -631,7 +1078,8 @@ True(unknownUiArgumentRejected, "unknown UI argument rejection");
 
 Console.WriteLine(
     "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
-    "exact client signatures, " +
+    "exact client signatures, SpellRegion duration-text hitch bypass, " +
+    "XP label hitch bypass, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
     "layouts, branches, and detours verified.");
 
@@ -724,7 +1172,7 @@ if (args is [var integrationMode, var clientPath] &&
             "runtime patch detail capability marker");
         True(detail.Contains("async writer guard active", StringComparison.Ordinal),
             "runtime patch detail writer guard");
-        Equal(4, installation.Regions.Count, "monitored runtime patch region count");
+        Equal(7, installation.Regions.Count, "monitored runtime patch region count");
         NativeClientDddAcceleration.VerifyInstalled(processHandle, installation);
 
         foreach (var region in installation.Regions)
@@ -800,7 +1248,7 @@ if (args is [var integrationMode, var clientPath] &&
 
         Console.WriteLine(
             $"PASS: installed the transactional runtime patch, detected real mutations in all " +
-            $"four regions, monitored PID {process.Id} while " +
+            $"seven regions, monitored PID {process.Id} while " +
             $"{(resumeClient ? "resumed" : "suspended")}, and ended it after runtime tamper: " +
             detail);
     }

@@ -58,8 +58,11 @@ Launcher features:
 - Version 1.0.24 added hash-gated, process-local DDD acceleration. Current
   source recognizes the exact verified public client and the exact
   Aetherium-keyed admin build. It leaves `client.exe`, `portal.dat`, and
-  `cell.dat` untouched by the launcher and fails before resume if either
+  `cell.dat` untouched by the launcher and fails before resume if any
   runtime hook cannot be installed exactly.
+- Version 1.0.26 restores client launch after the XP-label hitch skip: the
+  `SetText` detour keeps the original TextRegion in `ecx` before `ClearAllText`.
+  It also skips unchanged buff-duration and XP/allegiance number labels.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
@@ -67,11 +70,19 @@ Launcher features:
 
 ### Process-local DDD acceleration
 
-The launcher uses standard Windows process-memory APIs to install two small
-runtime hooks while an exact supported `client.exe` is suspended. They increase the native cache
-drain rate, cap each native DAT writer at 32 pending operations, and keep the
-patch UI incomplete until both writers drain. The capability exists only in
-that process; the launcher does not patch the executable or DAT files on disk.
+The launcher uses standard Windows process-memory APIs to install a handful of
+runtime hooks while an exact supported `client.exe` is suspended. Two of them
+increase the native cache drain rate, cap each native DAT writer at 32 pending
+operations, and keep the patch UI incomplete until both writers drain. A third
+replaces `SpellRegion::Update` so open buff/debuff duration labels skip a full
+text rebuild when the `m:ss` string has not changed. Two more skip
+`TextRegion::SetText` when the glyphs already match, and skip
+`AllegPanel::SetXPChange` visuals for sworn characters so vassal pass-up does
+not rebuild hidden XP-cost labels on every available-XP write. Version 1.0.26
+keeps the original TextRegion in `ecx` when that `SetText` detour falls through
+to `ClearAllText`, so the hitch skip does not crash the client during UI
+bring-up. The capability exists only in that process; the launcher does not
+patch the executable or DAT files on disk.
 
 When the server's launcher requirement is enabled, only a login carrying the
 exact A09 capability marker is admitted. An older launcher or direct start
@@ -168,6 +179,8 @@ csproj, and Inno Setup all consume it.
 Output: `artifacts\installer\AetheriumPlaySetup.exe`
 
 ## Releases & auto-update
+
+Player-facing version notes are in [`CHANGELOG.md`](CHANGELOG.md).
 
 Players' launchers check GitHub Releases on startup (and via **Help → Check for
 Updates**). If a newer `AetheriumPlaySetup.exe` is published, they get a popup
