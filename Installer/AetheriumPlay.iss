@@ -253,7 +253,7 @@ begin
   if DirectoryName = '' then
     Exit;
 
-  { {app} is not initialized during InitializeWizard. Never expand it unguarded. }
+  // app is not initialized during InitializeWizard. Never expand it unguarded.
   if TryExpandConstant('{app}', Candidate) and DirectoryIsUnder(DirectoryName, Candidate) then
   begin
     Result := True;
