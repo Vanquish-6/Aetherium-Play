@@ -3,7 +3,7 @@
 
 #define MyAppName "Aetherium Play"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.29"
+#define MyAppVersion "1.0.30"
 #endif
 #define MyAppPublisher "Vanquish (aka Chosen One)"
 #define MyAppExeName "AetheriumLauncher.exe"
@@ -221,17 +221,57 @@ begin
     Lowercase(RemoveBackslashUnlessRoot(RightName));
 end;
 
+function DirectoryIsUnder(const DirectoryName, ParentName: string): Boolean;
+var
+  Root, Parent: string;
+begin
+  Result := False;
+  if (DirectoryName = '') or (ParentName = '') then
+    Exit;
+  Root := RemoveBackslashUnlessRoot(DirectoryName);
+  Parent := RemoveBackslashUnlessRoot(ParentName);
+  Result := SameDirectory(Root, Parent) or
+    (Pos(Lowercase(AddBackslash(Parent)), Lowercase(AddBackslash(Root))) = 1);
+end;
+
+function TryExpandConstant(const ConstantName: string; var Value: string): Boolean;
+begin
+  Result := False;
+  try
+    Value := ExpandConstant(ConstantName);
+    Result := Value <> '';
+  except
+    Result := False;
+  end;
+end;
+
 function IsAetheriumPlayDirectory(const DirectoryName: string): Boolean;
 var
-  AppDir, Root: string;
+  Candidate: string;
 begin
   Result := False;
   if DirectoryName = '' then
     Exit;
-  AppDir := ExpandConstant('{app}');
-  Root := RemoveBackslashUnlessRoot(DirectoryName);
-  Result := SameDirectory(Root, AppDir) or
-    (Pos(Lowercase(AddBackslash(AppDir)), Lowercase(AddBackslash(Root))) = 1);
+
+  { {app} is not initialized during InitializeWizard. Never expand it unguarded. }
+  if TryExpandConstant('{app}', Candidate) and DirectoryIsUnder(DirectoryName, Candidate) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  if TryExpandConstant('{autopf}\Aetherium Play', Candidate) and
+     DirectoryIsUnder(DirectoryName, Candidate) then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Result :=
+    (TryExpandConstant('{pf32}\Aetherium Play', Candidate) and
+     DirectoryIsUnder(DirectoryName, Candidate)) or
+    (TryExpandConstant('{localappdata}\Programs\Aetherium Play', Candidate) and
+     DirectoryIsUnder(DirectoryName, Candidate));
 end;
 
 function TryAcceptGameDirectory(const DirectoryName: string; var FoundDir: string): Boolean;

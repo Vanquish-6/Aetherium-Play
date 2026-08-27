@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.30 - 2026-08-27
+
+### Fixed
+
+- 1.0.29 crashed at startup with `{app} constant before it was initialized`
+  because the Aetherium Play folder check ran during `InitializeWizard`. That
+  check now uses `{autopf}` / `{pf32}` and only reads `{app}` after it exists.
+
 ## 1.0.29 - 2026-08-27
 
 ### Fixed
