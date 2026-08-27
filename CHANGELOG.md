@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.29 - 2026-08-27
+
+### Fixed
+
+- First-time setup treated InstallShield's `setup.exe` stub exit as "the game
+  is installed," then opened a folder picker that defaulted to Aetherium Play
+  under Program Files. Players who accepted that default got
+  `Runtime error (at 35:808)`. Setup now waits for the original wizard, tells
+  the player not to pick the Aetherium Play folder, and will launch the 2004
+  installer again if `client.exe`, `portal.dat`, and `cell.dat` never appear.
+- The Dark Majesty archive is about 230 MB. Status text now says a slow
+  connection can take several minutes so the download is not mistaken for a
+  hang or a finished install.
+
 ## 1.0.28 - 2026-08-18
 
 ### Fixed

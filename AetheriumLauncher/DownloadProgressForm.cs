@@ -21,7 +21,7 @@ internal sealed class DownloadProgressForm : Form
         this.operation = operation;
 
         Text = "Aetherium Play Setup";
-        ClientSize = new Size(520, 155);
+        ClientSize = new Size(520, 168);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -29,18 +29,19 @@ internal sealed class DownloadProgressForm : Form
         ShowIcon = true;
 
         statusLabel.AutoSize = false;
-        statusLabel.Location = new Point(24, 20);
-        statusLabel.Size = new Size(472, 44);
-        statusLabel.Text = $"{operationName}\nConnecting to the disclosed community source...";
+        statusLabel.Location = new Point(24, 16);
+        statusLabel.Size = new Size(472, 56);
+        statusLabel.Text =
+            $"{operationName}\nConnecting. A slow connection can take several minutes. Leave this window open.";
 
-        progressBar.Location = new Point(24, 72);
+        progressBar.Location = new Point(24, 80);
         progressBar.Size = new Size(472, 24);
         progressBar.Minimum = 0;
         progressBar.Maximum = 1000;
         progressBar.Style = ProgressBarStyle.Continuous;
 
         cancelButton.Text = "Cancel";
-        cancelButton.Location = new Point(409, 108);
+        cancelButton.Location = new Point(409, 120);
         cancelButton.Size = new Size(87, 30);
         cancelButton.Click += (_, _) =>
         {
@@ -71,7 +72,8 @@ internal sealed class DownloadProgressForm : Form
         {
             var percent = Math.Clamp(value, 0, 100);
             progressBar.Value = Math.Clamp((int)Math.Round(percent * 10), 0, 1000);
-            statusLabel.Text = $"{operationName}\n{percent:0.0}% complete";
+            statusLabel.Text =
+                $"{operationName}\n{percent:0.0}% complete. A slow connection can take several minutes.";
         });
 
         try

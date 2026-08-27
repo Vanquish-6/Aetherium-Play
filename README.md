@@ -64,6 +64,9 @@ Launcher features:
   stays stock) and skips unchanged number-panel rebuilds through
   `TextRegion::SetInt`, `StatRegion::SetInt`, `InfoBox::SetAvailable`, and
   `AllegPanel::SetXPChange`. Buff-duration `m:ss` skipping remains.
+- Version 1.0.29 fixes first-time setup: it waits for the original Dark
+  Majesty wizard, refuses the Aetherium Play folder as a game path, and
+  tells players the ~230 MB download can take several minutes.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,

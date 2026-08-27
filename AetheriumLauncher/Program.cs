@@ -71,7 +71,7 @@ static class Program
                 StringComparison.OrdinalIgnoreCase))
         {
             return RunProgressOperation(
-                "Preparing the original Dark Majesty installer",
+                "Downloading the original Dark Majesty installer (about 230 MB)",
                 (progress, cancellationToken) =>
                     CommunityGameInstallerBootstrap.PrepareInstallerAsync(
                         args[1],

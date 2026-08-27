@@ -25,7 +25,10 @@ SHA-256: 046EA8FFFA7CFD5828355F72FEBADDB52B536510202DD73D79A19BFA340B92BC
 The historical installer is unpacked to a temporary directory. A one-byte
 logic patch disables only its obsolete Internet Explorer version check. The
 original InstallShield wizard then lets you choose the game installation
-location.
+location. The first-time archive is about 230 MB and can take several
+minutes on a slow connection. Leave the setup window open until that
+original wizard appears. Do not choose the Aetherium Play folder under
+Program Files; that folder is this launcher, not the game.
 
 2. DARK MAJESTY CLIENT.EXE
 
@@ -92,8 +95,8 @@ against a purpose-built modified client.
 Public launcher source:
 https://github.com/Vanquish-6/Aetherium-Play
 
-Version 1.0.28 source/release record:
-https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.28
+Version 1.0.29 source/release record:
+https://github.com/Vanquish-6/Aetherium-Play/releases/tag/v1.0.29
 
 The release page links the exact source commit and includes the setup SHA-256
-file. Aetherium Play 1.0.28 is unsigned; no Authenticode signature is claimed.
+file. Aetherium Play 1.0.29 is unsigned; no Authenticode signature is claimed.

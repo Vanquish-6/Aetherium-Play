@@ -147,7 +147,7 @@ jobs:
           Aetherium Play $version
 
           Install or upgrade with AetheriumPlaySetup.exe.
-          Extends the launcher patch for faster DDD updates.
+          First-time setup waits for the original Dark Majesty wizard, refuses the Aetherium Play folder, and keeps the ~230 MB download visible on slow connections.
           Exact source revision: https://github.com/${{ github.repository }}/commit/$sourceSha
           SHA-256: attached AetheriumPlaySetup.exe.sha256
           Authenticode status: unsigned
