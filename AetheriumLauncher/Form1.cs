@@ -19,10 +19,9 @@ public partial class Form1 : Form
     private const string FeatureArtworkRelativePath = @"Assets\zone-era-ac-village-camp.png";
     private const string PkFeatureArtworkRelativePath = @"Assets\skins\pk.bmp";
     private const string PlayButtonRelativePath = @"Assets\zone-era-play-button-better.png";
-    private const float FieldLabelColumnWidth = 150f;
-    private const float PortValueColumnWidth = 88f;
+    private const float FieldLabelColumnWidth = 124f;
     private const int ShellMargin = 32;
-    private const int FieldLabelColumnMinWidth = 150;
+    private const int FieldLabelColumnMinWidth = 108;
 
     // The backdrop PNG (Assets\zone-era-launcher-bg-final.png, 1578×974) bakes a black margin
     // around the gold launcher frame. ZoneEraSurface crops that margin away at load time using
@@ -30,9 +29,9 @@ public partial class Form1 : Form
     // design coordinates below are authored in cropped-shell pixels (1514×956).
     private static readonly Rectangle BackdropShellCropRect = new(30, 18, 1514, 956);
     private static readonly Size BackdropDesignSize = new(1514, 956);
-    private static readonly RectangleF ConfigOverlayRect = new(660, 248, 700, 410);
+    private static readonly RectangleF ConfigOverlayRect = new(648, 236, 720, 428);
     private static readonly RectangleF PkConfigOverlayRect = new(575, 310, 625, 205);
-    private static readonly SizeF OverlayLayoutReferenceSize = new(596f, 529f);
+    private static readonly SizeF OverlayLayoutReferenceSize = new(640f, 420f);
     // The launcher name sits centered vertically in the orange title-bar strip (y≈9-42).
     private static readonly RectangleF WindowTitleTextRect = new(24, 8, 420, 35);
     // Room / Zone / Tools / Help sit on the tan menu strip (y≈44-79), packed at the left in blue
@@ -67,10 +66,11 @@ public partial class Form1 : Form
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "AcLegacyLauncher");
 
-    private static readonly Color InkBrown = Color.FromArgb(38, 20, 6);
-    private static readonly Color ParchmentText = Color.FromArgb(66, 38, 13);
-    private static readonly Color EntryFill = Color.FromArgb(226, 201, 152);
-    private static readonly Color EntryBorder = Color.FromArgb(140, 104, 58);
+    private static readonly Color InkBrown = Color.FromArgb(32, 16, 6);
+    private static readonly Color EntryFill = Color.FromArgb(230, 206, 156);
+    private static readonly Color EntryInsetDark = Color.FromArgb(92, 54, 22);
+    private static readonly Color EntryInsetLight = Color.FromArgb(246, 226, 184);
+    private static readonly Color ParchmentPatch = Color.FromArgb(198, 164, 108);
     private static readonly Color ChromeTitleColor = Color.FromArgb(252, 228, 156); // warm golden — readable on orange
     private static readonly Color ChromeMenuColor = Color.FromArgb(34, 52, 154);
     private static readonly Color VioletGlow = Color.FromArgb(187, 68, 170);
@@ -79,13 +79,14 @@ public partial class Form1 : Form
     private readonly TextBox installPathTextBox = new();
     private readonly TextBox usernameTextBox = new();
     private readonly TextBox hostTextBox = new();
-    private readonly NumericUpDown portNumeric = new();
+    private readonly ServerChoiceBar serverChoice = new();
     private readonly TextBox passwordTextBox = new();
     private readonly TextBox zoneKeyTextBox = new();
-    private readonly CheckBox useNoDisplayModeCheckBox = new();
-    private readonly CheckBox seedSafeGraphicsCheckBox = new();
+    private readonly InkToggle useNoDisplayModeCheckBox = new();
+    private readonly InkToggle seedSafeGraphicsCheckBox = new();
     private readonly List<TableLayoutPanel> fieldRows = new();
     private readonly List<Label> fieldLabels = new();
+    private readonly List<LedgerField> ledgerFields = new();
     private readonly List<ArcaneButton> toolButtons = new();
     private readonly object runtimeGuardLock = new();
     private readonly HashSet<ClientAntiTamperRuntimeGuard> runtimeGuards = [];
@@ -93,7 +94,6 @@ public partial class Form1 : Form
 
     private ZoneEraSurface? surface;
     private TransparentOverlayPanel? configOverlay;
-    private TableLayoutPanel? portRow;
     private FlowLayoutPanel? optionRow;
     private FlowLayoutPanel? toolRow;
     private Label? windowTitleChromeLabel;
@@ -102,7 +102,7 @@ public partial class Form1 : Form
     private Label? toolsChromeLabel;
     private Label? helpChromeLabel;
     private Label? titleLabel;
-    private Label? subtitleLabel;
+    private Panel? titleRule;
     private ContextMenuStrip? fileMenu;
     private ContextMenuStrip? toolsMenu;
     private ContextMenuStrip? helpMenu;
@@ -244,7 +244,6 @@ public partial class Form1 : Form
         var label = new Label
         {
             AutoSize = false,
-            BackColor = Color.Transparent,
             ForeColor = color,
             Text = text,
             Cursor = cursor,
@@ -253,6 +252,14 @@ public partial class Form1 : Form
             UseCompatibleTextRendering = true,
             TextAlign = ContentAlignment.MiddleLeft,
         };
+        try
+        {
+            label.BackColor = Color.Transparent;
+        }
+        catch (ArgumentException)
+        {
+            label.BackColor = EntryFill;
+        }
 
         if (clickHandler is not null)
         {
@@ -266,6 +273,7 @@ public partial class Form1 : Form
     {
         fieldRows.Clear();
         fieldLabels.Clear();
+        ledgerFields.Clear();
         toolButtons.Clear();
         currentOverlayScale = 1f;
 
@@ -274,21 +282,18 @@ public partial class Form1 : Form
         StyleTextInput(passwordTextBox, "Password", true);
         StyleTextInput(hostTextBox, AetheriumInstallationConfiguration.DefaultHost);
         StyleTextInput(zoneKeyTextBox, "Optional -z");
-        StyleNumberInput(portNumeric);
+        serverChoice.SelectionChanged += (_, _) => SaveControlsToConfig();
 
         useNoDisplayModeCheckBox.Text = "No display mode (-nd)";
         useNoDisplayModeCheckBox.Checked = true;
-        StyleToggle(useNoDisplayModeCheckBox);
-
         seedSafeGraphicsCheckBox.Text = "Safe graphics";
         seedSafeGraphicsCheckBox.Checked = true;
-        StyleToggle(seedSafeGraphicsCheckBox);
 
         var overlay = new TransparentOverlayPanel
         {
             BackColor = Color.Transparent,
             Margin = Padding.Empty,
-            Padding = new Padding(18, 22, 18, 18),
+            Padding = new Padding(22, 16, 20, 12),
         };
 
         var layout = new TableLayoutPanel
@@ -307,31 +312,29 @@ public partial class Form1 : Form
         {
             AutoSize = true,
             Text = "Portal Login",
-            Font = new Font("Georgia", 15f, FontStyle.Bold, GraphicsUnit.Point),
+            Font = new Font("Georgia", 16f, FontStyle.Bold, GraphicsUnit.Point),
             ForeColor = InkBrown,
             BackColor = Color.Transparent,
-            Margin = Padding.Empty,
+            Margin = new Padding(0, 0, 0, 4),
         };
         layout.Controls.Add(titleLabel);
 
-        subtitleLabel = new Label
+        titleRule = new Panel
         {
-            AutoSize = true,
-            MaximumSize = new Size(430, 0),
-            Text = "Point the old client at your shard.\n" + DeveloperCredit,
-            Font = new Font("Trebuchet MS", 8.75f, FontStyle.Italic, GraphicsUnit.Point),
-            ForeColor = ParchmentText,
-            BackColor = Color.Transparent,
-            Margin = new Padding(0, 4, 0, 10),
+            Height = 2,
+            Width = 176,
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.FromArgb(118, 72, 24),
         };
-        layout.Controls.Add(subtitleLabel);
+        layout.Controls.Add(titleRule);
 
-        layout.Controls.Add(CreateFieldRow("Install", installPathTextBox));
-        layout.Controls.Add(CreateFieldRow("Account Name", usernameTextBox));
-        layout.Controls.Add(CreateFieldRow("Password", passwordTextBox));
-        layout.Controls.Add(CreateFieldRow("Host", hostTextBox));
-        layout.Controls.Add(CreatePortRow());
-        layout.Controls.Add(CreateFieldRow("Zone", zoneKeyTextBox));
+        layout.Controls.Add(CreateFieldRow("Install", WrapLedger(installPathTextBox)));
+        layout.Controls.Add(CreateFieldRow("Account", WrapLedger(usernameTextBox)));
+        layout.Controls.Add(CreateFieldRow("Password", WrapLedger(passwordTextBox)));
+        layout.Controls.Add(CreateFieldRow("Host", WrapLedger(hostTextBox)));
+        layout.Controls.Add(CreateFieldRow("Server", serverChoice));
+        serverChoice.Dock = DockStyle.Left;
+        layout.Controls.Add(CreateFieldRow("Zone", WrapLedger(zoneKeyTextBox)));
 
         optionRow = new FlowLayoutPanel
         {
@@ -339,7 +342,7 @@ public partial class Form1 : Form
             BackColor = Color.Transparent,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
-            Margin = new Padding(0, 12, 0, 0),
+            Margin = new Padding(124, 12, 0, 0),
             Padding = Padding.Empty,
         };
         optionRow.Controls.Add(useNoDisplayModeCheckBox);
@@ -351,8 +354,8 @@ public partial class Form1 : Form
             AutoSize = true,
             BackColor = Color.Transparent,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = true,
-            Margin = new Padding(0, 10, 0, 0),
+            WrapContents = false,
+            Margin = new Padding(124, 8, 0, 0),
             Padding = Padding.Empty,
         };
         toolRow.Controls.Add(CreateToolButton("Folder", (_, _) => OpenInstallFolder()));
@@ -363,6 +366,13 @@ public partial class Form1 : Form
         return overlay;
     }
 
+    private LedgerField WrapLedger(TextBox textBox)
+    {
+        var field = new LedgerField(textBox);
+        ledgerFields.Add(field);
+        return field;
+    }
+
     private TableLayoutPanel CreateFieldRow(string labelText, Control inputControl)
     {
         var row = new TableLayoutPanel
@@ -370,7 +380,7 @@ public partial class Form1 : Form
             AutoSize = true,
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Margin = new Padding(0, 5, 0, 0),
+            Margin = new Padding(0, 4, 0, 0),
             Padding = Padding.Empty,
             BackColor = Color.Transparent,
         };
@@ -387,38 +397,13 @@ public partial class Form1 : Form
         return row;
     }
 
-    private TableLayoutPanel CreatePortRow()
-    {
-        var row = new TableLayoutPanel
-        {
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            ColumnCount = 2,
-            Margin = new Padding(0, 5, 0, 0),
-            Padding = Padding.Empty,
-            BackColor = Color.Transparent,
-        };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, FieldLabelColumnWidth));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, PortValueColumnWidth));
-
-        var portLabel = CreateFieldLabel("Port");
-        portNumeric.Dock = DockStyle.Fill;
-        portNumeric.Margin = Padding.Empty;
-        row.Controls.Add(portLabel, 0, 0);
-        row.Controls.Add(portNumeric, 1, 0);
-
-        fieldRows.Add(row);
-        portRow = row;
-        return row;
-    }
-
     private ArcaneButton CreateToolButton(string text, EventHandler clickHandler)
     {
         var button = new ArcaneButton
         {
             Text = text,
-            Width = 86,
-            Height = 30,
+            Width = 90,
+            Height = 28,
             Margin = new Padding(0, 0, 8, 0),
         };
         button.Click += clickHandler;
@@ -482,7 +467,7 @@ public partial class Form1 : Form
         var compact = currentSkin == PkSkinName;
         var overlayScale = compact
             ? Math.Clamp(configOverlay.Bounds.Height / 320f, 0.42f, 0.62f)
-            : 1.2f * Math.Min(
+            : Math.Min(
                 configOverlay.Bounds.Width / OverlayLayoutReferenceSize.Width,
                 configOverlay.Bounds.Height / OverlayLayoutReferenceSize.Height);
         ApplyChromeScale(surfaceScale);
@@ -494,13 +479,13 @@ public partial class Form1 : Form
         var label = new Label
         {
             AutoSize = false,
-            Height = 24,
+            Height = 26,
             Dock = DockStyle.Fill,
             Text = text,
-            Font = new Font("Georgia", 9f, FontStyle.Bold, GraphicsUnit.Point),
+            Font = new Font("Georgia", 9.5f, FontStyle.Bold, GraphicsUnit.Point),
             ForeColor = InkBrown,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Margin = new Padding(0, 3, 8, 0),
+            TextAlign = ContentAlignment.MiddleRight,
+            Margin = new Padding(0, 0, 10, 0),
             BackColor = Color.Transparent,
         };
 
@@ -512,34 +497,13 @@ public partial class Form1 : Form
     {
         textBox.AutoSize = false;
         textBox.PlaceholderText = placeholderText;
-        textBox.BorderStyle = BorderStyle.FixedSingle;
+        textBox.BorderStyle = BorderStyle.None;
         textBox.BackColor = EntryFill;
         textBox.ForeColor = InkBrown;
-        textBox.Font = new Font("Trebuchet MS", 8.75f, FontStyle.Bold, GraphicsUnit.Point);
+        textBox.Font = new Font("Trebuchet MS", 9f, FontStyle.Bold, GraphicsUnit.Point);
         textBox.UseSystemPasswordChar = usePasswordChar;
-        textBox.Height = 24;
-    }
-
-    private static void StyleNumberInput(NumericUpDown input)
-    {
-        input.Minimum = 1;
-        input.Maximum = 65535;
-        input.Value = 9000;
-        input.ThousandsSeparator = false;
-        input.BorderStyle = BorderStyle.FixedSingle;
-        input.BackColor = EntryFill;
-        input.ForeColor = InkBrown;
-        input.Font = new Font("Trebuchet MS", 8.75f, FontStyle.Bold, GraphicsUnit.Point);
-        input.TextAlign = HorizontalAlignment.Center;
-    }
-
-    private static void StyleToggle(CheckBox checkBox)
-    {
-        checkBox.AutoSize = true;
-        checkBox.BackColor = Color.Transparent;
-        checkBox.ForeColor = InkBrown;
-        checkBox.Font = new Font("Trebuchet MS", 9.25f, FontStyle.Bold, GraphicsUnit.Point);
-        checkBox.Margin = new Padding(0, 0, 0, 4);
+        textBox.Height = 20;
+        textBox.Margin = Padding.Empty;
     }
 
     private static string GetBackdropPath()
@@ -654,14 +618,14 @@ public partial class Form1 : Form
     // against the authored overlay size rather than the overall window size.
     private void ApplyOverlayScale(float scale, bool compact)
     {
-        if (configOverlay is null || titleLabel is null || subtitleLabel is null || optionRow is null || toolRow is null || portRow is null)
+        if (configOverlay is null || titleLabel is null || titleRule is null || optionRow is null || toolRow is null)
         {
             return;
         }
 
         scale = compact
             ? Math.Clamp(scale, 0.42f, 0.62f)
-            : Math.Clamp(scale, 0.72f, 1.15f);
+            : Math.Clamp(scale, 0.78f, 1.08f);
         if (Math.Abs(scale - currentOverlayScale) < 0.01f && compact == currentCompactOverlay)
         {
             return;
@@ -670,16 +634,17 @@ public partial class Form1 : Form
         currentOverlayScale = scale;
         currentCompactOverlay = compact;
         configOverlay.Padding = ScalePadding(
-            compact ? new Padding(12, 10, 12, 8) : new Padding(18, 22, 18, 18),
+            compact ? new Padding(12, 10, 12, 8) : new Padding(22, 16, 20, 12),
             scale);
 
         titleLabel.Visible = !compact;
-        subtitleLabel.Visible = !compact;
+        titleRule.Visible = !compact;
         toolRow.Visible = !compact;
-        titleLabel.Font = CreateScaledFont("Georgia", 15f, FontStyle.Bold, scale);
-        subtitleLabel.Font = CreateScaledFont("Trebuchet MS", 8.75f, FontStyle.Italic, scale);
-        subtitleLabel.Margin = ScalePadding(new Padding(0, 4, 0, 10), scale);
-        subtitleLabel.MaximumSize = new Size(ScaleInt(430, scale), 0);
+        titleLabel.Font = CreateScaledFont("Georgia", 16f, FontStyle.Bold, scale);
+        titleLabel.Margin = ScalePadding(new Padding(0, 0, 0, 4), scale);
+        titleRule.Width = ScaleInt(168, scale);
+        titleRule.Height = Math.Max(1, ScaleInt(2, scale));
+        titleRule.Margin = ScalePadding(new Padding(0, 0, 0, 10), scale);
 
         foreach (var row in fieldRows)
         {
@@ -687,46 +652,41 @@ public partial class Form1 : Form
             if (row.ColumnStyles.Count > 0)
             {
                 row.ColumnStyles[0].Width = compact
-                    ? Math.Max(68, ScaleInt((int)FieldLabelColumnWidth, scale))
+                    ? Math.Max(64, ScaleInt((int)FieldLabelColumnWidth, scale))
                     : Math.Max(FieldLabelColumnMinWidth, ScaleInt((int)FieldLabelColumnWidth, scale));
             }
         }
 
-        if (portRow.ColumnStyles.Count > 1)
-        {
-            portRow.ColumnStyles[1].Width = ScaleInt((int)PortValueColumnWidth, scale);
-        }
-
         foreach (var label in fieldLabels)
         {
-            label.Height = ScaleInt(24, scale);
-            label.Font = CreateScaledFont("Georgia", 9f, FontStyle.Bold, scale);
-            label.Margin = ScalePadding(new Padding(0, 3, 8, 0), scale);
+            label.Height = ScaleInt(26, scale);
+            label.Font = CreateScaledFont("Georgia", 9.5f, FontStyle.Bold, scale, compact ? 7.5f : 8.75f);
+            label.Margin = ScalePadding(new Padding(0, 0, 10, 0), scale);
         }
 
-        ApplyInputScale(installPathTextBox, scale);
-        ApplyInputScale(usernameTextBox, scale);
-        ApplyInputScale(passwordTextBox, scale);
-        ApplyInputScale(hostTextBox, scale);
-        ApplyInputScale(zoneKeyTextBox, scale);
-        ApplyInputScale(portNumeric, scale);
+        foreach (var ledger in ledgerFields)
+        {
+            ledger.ApplyScale(scale);
+        }
 
-        useNoDisplayModeCheckBox.Font = CreateScaledFont("Trebuchet MS", 9.25f, FontStyle.Bold, scale, compact ? 6.5f : 8.25f);
-        useNoDisplayModeCheckBox.Margin = ScalePadding(new Padding(0, 0, 0, 4), scale);
-        seedSafeGraphicsCheckBox.Font = CreateScaledFont("Trebuchet MS", 9.25f, FontStyle.Bold, scale, compact ? 6.5f : 8.25f);
-        seedSafeGraphicsCheckBox.Margin = ScalePadding(new Padding(0, 0, 0, 4), scale);
+        serverChoice.ApplyScale(scale, compact);
 
-        optionRow.FlowDirection = compact ? FlowDirection.LeftToRight : FlowDirection.TopDown;
+        optionRow.FlowDirection = FlowDirection.TopDown;
         optionRow.WrapContents = false;
-        optionRow.Margin = ScalePadding(new Padding(0, 10, 0, 0), scale);
-        toolRow.Margin = ScalePadding(new Padding(0, 8, 0, 0), scale);
+        optionRow.Margin = ScalePadding(new Padding(compact ? 0 : 124, 12, 0, 0), scale);
+        toolRow.Margin = ScalePadding(new Padding(compact ? 0 : 124, 12, 0, 0), scale);
+
+        useNoDisplayModeCheckBox.Font = CreateScaledFont("Georgia", 9.25f, FontStyle.Bold, scale, compact ? 6.5f : 8.25f);
+        useNoDisplayModeCheckBox.Margin = ScalePadding(new Padding(0, 0, 0, 6), scale);
+        seedSafeGraphicsCheckBox.Font = CreateScaledFont("Georgia", 9.25f, FontStyle.Bold, scale, compact ? 6.5f : 8.25f);
+        seedSafeGraphicsCheckBox.Margin = Padding.Empty;
 
         foreach (var button in toolButtons)
         {
-            button.Width = ScaleInt(86, scale);
-            button.Height = ScaleInt(30, scale);
+            button.Width = ScaleInt(90, scale);
+            button.Height = ScaleInt(28, scale);
             button.Margin = ScalePadding(new Padding(0, 0, 8, 0), scale);
-            button.Font = CreateScaledFont("Trebuchet MS", 8.5f, FontStyle.Bold, scale);
+            button.Font = CreateScaledFont("Georgia", 9.5f, FontStyle.Bold, scale);
         }
 
         configOverlay.PerformLayout();
@@ -747,12 +707,6 @@ public partial class Form1 : Form
         zoneChromeLabel.Font = CreateScaledFont("Georgia", 11f, menuStyle, scale, 9f);
         toolsChromeLabel.Font = CreateScaledFont("Georgia", 11f, menuStyle, scale, 9f);
         helpChromeLabel.Font = CreateScaledFont("Georgia", 11f, menuStyle, scale, 9f);
-    }
-
-    private static void ApplyInputScale(Control input, float scale)
-    {
-        input.Font = CreateScaledFont("Trebuchet MS", 8.75f, FontStyle.Bold, scale);
-        input.Height = ScaleInt(24, scale);
     }
 
     private static Font CreateScaledFont(string family, float size, FontStyle style, float scale)
@@ -1115,7 +1069,9 @@ public partial class Form1 : Form
             InstallPath = startupInstallDirectory ?? installPathTextBox.Text.Trim(),
             TicketKey = usernameTextBox.Text.Trim(),
             Host = hostTextBox.Text.Trim(),
-            Port = (int)portNumeric.Value,
+            Port = serverChoice.RedSelected
+                ? AetheriumInstallationConfiguration.RedServerPort
+                : AetheriumInstallationConfiguration.WhiteServerPort,
             VArg = passwordTextBox.Text.Trim(),
             ZArg = zoneKeyTextBox.Text.Trim(),
             UseNoDisplayMode = useNoDisplayModeCheckBox.Checked,
@@ -1188,7 +1144,7 @@ public partial class Form1 : Form
         installPathTextBox.Text = config.InstallPath;
         usernameTextBox.Text = config.TicketKey;
         hostTextBox.Text = config.Host;
-        portNumeric.Value = Math.Clamp(config.Port, (int)portNumeric.Minimum, (int)portNumeric.Maximum);
+        serverChoice.SetRedSelected(config.Port == AetheriumInstallationConfiguration.RedServerPort);
         passwordTextBox.Text = config.VArg;
         zoneKeyTextBox.Text = config.ZArg;
         useNoDisplayModeCheckBox.Checked = config.UseNoDisplayMode;
@@ -1228,10 +1184,7 @@ public partial class Form1 : Form
         }
 
         hostTextBox.Text = dataCenter.ServerAddress;
-        portNumeric.Value = Math.Clamp(
-            dataCenter.ServerPort,
-            (int)portNumeric.Minimum,
-            (int)portNumeric.Maximum);
+        serverChoice.SetRedSelected(dataCenter.ServerPort == AetheriumInstallationConfiguration.RedServerPort);
     }
 
     private void SaveControlsToConfig()
@@ -1410,7 +1363,14 @@ public partial class Form1 : Form
         {
             DoubleBuffered = true;
             SetStyle(ControlStyles.SupportsTransparentBackColor, true);
-            BackColor = Color.Transparent;
+            try
+            {
+                BackColor = Color.Transparent;
+            }
+            catch (ArgumentException)
+            {
+                BackColor = EntryFill;
+            }
         }
     }
 
@@ -1419,6 +1379,7 @@ public partial class Form1 : Form
         private readonly Image? backdrop;
         private Image? featureArtwork;
         private readonly Image? playButton;
+        private readonly Bitmap grain = CreateGrainBitmap(160);
         private bool usePkSkin;
 
         public ZoneEraSurface(string backdropPath, string featureArtworkPath, string playButtonPath)
@@ -1684,6 +1645,62 @@ public partial class Form1 : Form
                     GraphicsUnit.Pixel);
             }
             g.InterpolationMode = previousInterpolation;
+
+            var parchment = MapFromDesign(
+                usePkSkin ? PkConfigOverlayRect : FeatureParchmentDestRect,
+                BackdropDesignSize);
+            using (var grainClip = new Region(destination))
+            {
+                grainClip.Exclude(parchment);
+                g.SetClip(grainClip, CombineMode.Replace);
+                DrawGrain(g, destination);
+                g.ResetClip();
+            }
+        }
+
+        private void DrawGrain(Graphics g, Rectangle bounds)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+            {
+                return;
+            }
+
+            using var brush = new TextureBrush(grain, WrapMode.Tile);
+            g.FillRectangle(brush, bounds);
+        }
+
+        private static Bitmap CreateGrainBitmap(int size)
+        {
+            var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            var rect = new Rectangle(0, 0, size, size);
+            var data = bitmap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var bytes = new byte[Math.Abs(data.Stride) * size];
+                var rng = new Random(0x6A17E91);
+                for (var i = 0; i < bytes.Length; i += 4)
+                {
+                    var speckle = rng.Next(40, 220);
+                    var alpha = rng.Next(0, 22);
+                    if (rng.Next(0, 22) == 0)
+                    {
+                        alpha = rng.Next(24, 48);
+                    }
+
+                    bytes[i] = (byte)(speckle * 55 / 100);
+                    bytes[i + 1] = (byte)(speckle * 72 / 100);
+                    bytes[i + 2] = (byte)speckle;
+                    bytes[i + 3] = (byte)alpha;
+                }
+
+                Marshal.Copy(bytes, 0, data.Scan0, bytes.Length);
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+
+            return bitmap;
         }
 
         private void DrawChromeText(Graphics g)
@@ -1747,9 +1764,246 @@ public partial class Form1 : Form
                 backdrop?.Dispose();
                 featureArtwork?.Dispose();
                 playButton?.Dispose();
+                grain.Dispose();
             }
 
             base.Dispose(disposing);
+        }
+    }
+
+    private sealed class LedgerField : Panel
+    {
+        private readonly TextBox inner;
+
+        public LedgerField(TextBox inner)
+        {
+            this.inner = inner;
+            DoubleBuffered = true;
+            BackColor = EntryFill;
+            Padding = new Padding(5, 3, 5, 3);
+            Height = 26;
+            Margin = Padding.Empty;
+            inner.BorderStyle = BorderStyle.None;
+            inner.Dock = DockStyle.Fill;
+            inner.Margin = Padding.Empty;
+            Controls.Add(inner);
+        }
+
+        public void ApplyScale(float scale)
+        {
+            Padding = ScalePadding(new Padding(5, 3, 5, 3), scale);
+            Height = ScaleInt(26, scale);
+            inner.Font = CreateScaledFont("Trebuchet MS", 9f, FontStyle.Bold, scale);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(EntryFill);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var rect = new Rectangle(0, 0, Width - 1, Height - 1);
+            using var dark = new Pen(EntryInsetDark);
+            using var light = new Pen(EntryInsetLight);
+            e.Graphics.DrawLine(dark, rect.Left, rect.Top, rect.Right, rect.Top);
+            e.Graphics.DrawLine(dark, rect.Left, rect.Top, rect.Left, rect.Bottom);
+            e.Graphics.DrawLine(light, rect.Left, rect.Bottom, rect.Right, rect.Bottom);
+            e.Graphics.DrawLine(light, rect.Right, rect.Top, rect.Right, rect.Bottom);
+        }
+    }
+
+    private sealed class InkToggle : Control
+    {
+        private bool isChecked;
+
+        public bool Checked
+        {
+            get => isChecked;
+            set
+            {
+                if (isChecked == value)
+                {
+                    return;
+                }
+
+                isChecked = value;
+                Invalidate();
+            }
+        }
+
+        public InkToggle()
+        {
+            DoubleBuffered = true;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.SupportsTransparentBackColor |
+                ControlStyles.UserPaint,
+                true);
+            try
+            {
+                BackColor = Color.Transparent;
+            }
+            catch (ArgumentException)
+            {
+                // Wine's WinForms rejects Transparent on a raw Control.
+                BackColor = EntryFill;
+            }
+            ForeColor = InkBrown;
+            Font = new Font("Georgia", 9.25f, FontStyle.Bold, GraphicsUnit.Point);
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnTextChanged(EventArgs e)
+        {
+            base.OnTextChanged(e);
+            ResizeToText();
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            base.OnFontChanged(e);
+            ResizeToText();
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            Checked = !Checked;
+            base.OnClick(e);
+        }
+
+        private void ResizeToText()
+        {
+            var text = string.IsNullOrEmpty(Text) ? "X" : Text;
+            var textSize = TextRenderer.MeasureText(
+                text,
+                Font,
+                new Size(int.MaxValue, int.MaxValue),
+                TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+            Size = new Size(textSize.Width + 28, Math.Max(22, textSize.Height + 6));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var box = 13;
+            var boxRect = new Rectangle(1, Math.Max(1, (Height - box) / 2), box, box);
+            using (var fill = new SolidBrush(EntryFill))
+            using (var border = new Pen(EntryInsetDark))
+            {
+                g.FillRectangle(fill, boxRect);
+                g.DrawRectangle(border, boxRect);
+            }
+
+            if (Checked)
+            {
+                using var mark = new Pen(InkBrown, 2f);
+                g.DrawLines(mark, new[]
+                {
+                    new Point(boxRect.Left + 2, boxRect.Top + 7),
+                    new Point(boxRect.Left + 5, boxRect.Bottom - 3),
+                    new Point(boxRect.Right - 2, boxRect.Top + 3),
+                });
+            }
+
+            TextRenderer.DrawText(
+                g,
+                Text,
+                Font,
+                new Rectangle(boxRect.Right + 8, 0, Math.Max(1, Width - boxRect.Right - 8), Height),
+                ForeColor,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+        }
+    }
+
+    private sealed class ServerChoiceBar : FlowLayoutPanel
+    {
+        private readonly ArcaneButton whiteButton;
+        private readonly ArcaneButton redButton;
+        private readonly ToolTip toolTip = new();
+
+        public event EventHandler? SelectionChanged;
+
+        public bool RedSelected { get; private set; }
+
+        public ServerChoiceBar()
+        {
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            try
+            {
+                BackColor = Color.Transparent;
+            }
+            catch (ArgumentException)
+            {
+                BackColor = EntryFill;
+            }
+            FlowDirection = FlowDirection.LeftToRight;
+            WrapContents = false;
+            Margin = Padding.Empty;
+            Padding = Padding.Empty;
+
+            whiteButton = CreateServerButton("White", ArcaneButton.ButtonPalette.Bone);
+            redButton = CreateServerButton("Red", ArcaneButton.ButtonPalette.Blood);
+            toolTip.SetToolTip(whiteButton, "White server · port 9000");
+            toolTip.SetToolTip(redButton, "Red server · port 9100");
+            Controls.Add(whiteButton);
+            Controls.Add(redButton);
+            SetRedSelected(false);
+        }
+
+        public void SetRedSelected(bool red)
+        {
+            RedSelected = red;
+            whiteButton.Chosen = !red;
+            redButton.Chosen = red;
+            whiteButton.Invalidate();
+            redButton.Invalidate();
+        }
+
+        public void ApplyScale(float scale, bool compact)
+        {
+            var width = Math.Max(compact ? 58 : 78, ScaleInt(90, scale));
+            var height = Math.Max(compact ? 20 : 24, ScaleInt(28, scale));
+            var font = CreateScaledFont("Georgia", 9.5f, FontStyle.Bold, scale, compact ? 7f : 8.5f);
+            whiteButton.Width = width;
+            redButton.Width = width;
+            whiteButton.Height = height;
+            redButton.Height = height;
+            whiteButton.Margin = ScalePadding(new Padding(0, 0, 8, 0), scale);
+            redButton.Margin = Padding.Empty;
+            whiteButton.Font = font;
+            redButton.Font = CreateScaledFont("Georgia", 9.5f, FontStyle.Bold, scale, compact ? 7f : 8.5f);
+        }
+
+        private ArcaneButton CreateServerButton(string text, ArcaneButton.ButtonPalette palette)
+        {
+            var button = new ArcaneButton
+            {
+                Text = text,
+                Palette = palette,
+                Width = 90,
+                Height = 28,
+                Margin = palette == ArcaneButton.ButtonPalette.Blood
+                    ? Padding.Empty
+                    : new Padding(0, 0, 8, 0),
+                Font = new Font("Georgia", 9.5f, FontStyle.Bold, GraphicsUnit.Point),
+            };
+            button.Click += (_, _) => SelectRed(palette == ArcaneButton.ButtonPalette.Blood);
+            return button;
+        }
+
+        private void SelectRed(bool red)
+        {
+            if (RedSelected == red)
+            {
+                return;
+            }
+
+            SetRedSelected(red);
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -1760,22 +2014,57 @@ public partial class Form1 : Form
 
         public bool Primary { get; init; }
 
+        public ButtonPalette Palette { get; init; }
+
+        private bool chosen;
+
+        public bool Chosen
+        {
+            get => chosen;
+            set
+            {
+                if (chosen == value)
+                {
+                    return;
+                }
+
+                chosen = value;
+                Invalidate();
+            }
+        }
+
+        public enum ButtonPalette
+        {
+            Brass,
+            Bone,
+            Blood,
+        }
+
         public ArcaneButton()
         {
             DoubleBuffered = true;
             Cursor = Cursors.Hand;
             FlatStyle = FlatStyle.Flat;
             FlatAppearance.BorderSize = 0;
-            BackColor = Color.Transparent;
+            FlatAppearance.MouseOverBackColor = ParchmentPatch;
+            FlatAppearance.MouseDownBackColor = ParchmentPatch;
+            BackColor = ParchmentPatch;
             ForeColor = Color.FromArgb(238, 210, 122);
             UseVisualStyleBackColor = false;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.Opaque |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.UserPaint,
+                true);
         }
 
         protected override void OnMouseEnter(EventArgs e)
         {
             base.OnMouseEnter(e);
             isHovering = true;
-            Invalidate();
+            Invalidate(false);
         }
 
         protected override void OnMouseLeave(EventArgs e)
@@ -1783,28 +2072,37 @@ public partial class Form1 : Form
             base.OnMouseLeave(e);
             isHovering = false;
             isPressed = false;
-            Invalidate();
+            Invalidate(false);
         }
 
         protected override void OnMouseDown(MouseEventArgs mevent)
         {
             base.OnMouseDown(mevent);
             isPressed = true;
-            Invalidate();
+            Invalidate(false);
         }
 
         protected override void OnMouseUp(MouseEventArgs mevent)
         {
             base.OnMouseUp(mevent);
             isPressed = false;
-            Invalidate();
+            Invalidate(false);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            using var patch = new SolidBrush(ParchmentPatch);
+            e.Graphics.FillRectangle(patch, ClientRectangle);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var patch = new SolidBrush(ParchmentPatch);
+            e.Graphics.FillRectangle(patch, ClientRectangle);
+            e.Graphics.SmoothingMode = SmoothingMode.None;
             if (Primary)
             {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 PaintPrimary(e);
             }
             else
@@ -1861,26 +2159,74 @@ public partial class Form1 : Form
 
         private void PaintSecondary(PaintEventArgs e)
         {
-            var rect = new Rectangle(1, 1, Width - 3, Height - 3);
-            var start = isPressed ? AdjustColor(Color.FromArgb(115, 72, 30), -8) : isHovering ? AdjustColor(Color.FromArgb(145, 92, 40), 8) : Color.FromArgb(145, 92, 40);
-            var end = isPressed ? AdjustColor(Color.FromArgb(82, 48, 19), -8) : Color.FromArgb(82, 48, 19);
-
-            using (var path = CreateRoundedPath(rect, 10))
-            using (var fillBrush = new LinearGradientBrush(rect, start, end, LinearGradientMode.Vertical))
+            var rect = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+            var (start, end, border, text) = GetPaletteColors();
+            if (isHovering && !Chosen)
             {
-                e.Graphics.FillPath(fillBrush, path);
-                using var borderPen = new Pen(Color.FromArgb(223, 186, 114), 1.6f);
-                e.Graphics.DrawPath(borderPen, path);
+                start = AdjustColor(start, 10);
+                end = AdjustColor(end, 8);
             }
 
-            using var font = new Font("Georgia", 9.75f, FontStyle.Bold, GraphicsUnit.Point);
+            if (isPressed)
+            {
+                start = AdjustColor(start, -10);
+                end = AdjustColor(end, -10);
+            }
+
+            using (var fillBrush = new LinearGradientBrush(rect, start, end, LinearGradientMode.Vertical))
+            {
+                e.Graphics.FillRectangle(fillBrush, rect);
+                using var borderPen = new Pen(border);
+                e.Graphics.DrawRectangle(borderPen, rect);
+            }
+
+            if (Chosen)
+            {
+                var inset = Rectangle.Inflate(rect, -3, -3);
+                using var insetPen = new Pen(Color.FromArgb(140, 40, 18, 6));
+                e.Graphics.DrawRectangle(insetPen, inset);
+            }
+
+            var textRect = rect;
+            if (isPressed || Chosen)
+            {
+                textRect.Offset(0, 1);
+            }
+
             TextRenderer.DrawText(
                 e.Graphics,
                 Text,
-                font,
-                rect,
-                Color.FromArgb(246, 223, 171),
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                Font,
+                textRect,
+                text,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        private (Color Start, Color End, Color Border, Color Text) GetPaletteColors()
+        {
+            if (Chosen && Palette == ButtonPalette.Bone)
+            {
+                return (
+                    Color.FromArgb(248, 236, 204),
+                    Color.FromArgb(214, 188, 132),
+                    Color.FromArgb(92, 56, 18),
+                    Color.FromArgb(32, 16, 6));
+            }
+
+            if (Chosen && Palette == ButtonPalette.Blood)
+            {
+                return (
+                    Color.FromArgb(168, 36, 28),
+                    Color.FromArgb(96, 12, 8),
+                    Color.FromArgb(228, 176, 96),
+                    Color.FromArgb(255, 236, 210));
+            }
+
+            return (
+                Color.FromArgb(145, 92, 40),
+                Color.FromArgb(82, 48, 19),
+                Color.FromArgb(223, 186, 114),
+                Color.FromArgb(246, 223, 171));
         }
     }
 

@@ -28,6 +28,11 @@ internal static class GraphicsBootstrap
     // is enough.
     internal static string DescribeResolvedDDrawDll(string installDirectory)
     {
+        if (WineRuntime.IsWine)
+        {
+            RemoveLocalDirectDrawOverrides(installDirectory);
+        }
+
         var expectedPath = Path.Combine(installDirectory, "DDraw.dll");
         var handle = LoadLibrary("DDraw.dll");
         if (handle == IntPtr.Zero)
@@ -40,6 +45,11 @@ internal static class GraphicsBootstrap
             var buffer = new StringBuilder(1024);
             GetModuleFileName(handle, buffer, buffer.Capacity);
             var resolvedPath = buffer.ToString();
+            if (WineRuntime.IsWine)
+            {
+                return $"Wine DirectDraw ({resolvedPath})";
+            }
+
             var isOurWrapper = resolvedPath.Equals(expectedPath, StringComparison.OrdinalIgnoreCase);
             return isOurWrapper
                 ? $"our dgVoodoo wrapper ({resolvedPath})"
@@ -53,9 +63,40 @@ internal static class GraphicsBootstrap
 
     internal static void SeedSafeGraphicsSettings()
     {
-        using var key = Registry.CurrentUser.CreateSubKey(RegistrySubKey, writable: true)
-            ?? throw new InvalidOperationException("Could not open the AC registry key.");
+        using (var key = Registry.CurrentUser.CreateSubKey(RegistrySubKey, writable: true)
+            ?? throw new InvalidOperationException("Could not open the AC registry key."))
+        {
+            SeedGraphicsValues(key);
+        }
 
+        // The Windows installer writes HKLM. Wine prefixes have no Inno Setup
+        // pass, so the 32-bit launcher writes the game's real key as well.
+        if (WineRuntime.IsWine)
+        {
+            foreach (var subKey in new[]
+            {
+                @"SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00",
+                @"SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00",
+            })
+            {
+                try
+                {
+                    using var key = Registry.LocalMachine.CreateSubKey(subKey, writable: true);
+                    if (key is not null)
+                    {
+                        SeedGraphicsValues(key);
+                    }
+                }
+                catch
+                {
+                    // HKCU VirtualStore remains if a prefix blocks HKLM.
+                }
+            }
+        }
+    }
+
+    private static void SeedGraphicsValues(RegistryKey key)
+    {
         // Fullscreen avoids the GDI 16-bit desktop check in windowed mode (modern Windows is 32-bit).
         key.SetValue("UseHardware", 1, RegistryValueKind.DWord);
         key.SetValue("DoubleBuffer", 2, RegistryValueKind.DWord);
@@ -214,6 +255,12 @@ internal static class GraphicsBootstrap
 
     internal static bool EnsureDirectDrawWrapper(string installDirectory, string repositoryToolsDirectory)
     {
+        if (WineRuntime.IsWine)
+        {
+            RemoveLocalDirectDrawOverrides(installDirectory);
+            return true;
+        }
+
         var extractedDirectory = Path.Combine(repositoryToolsDirectory, "extracted");
         var wrapperSourceDirectory = Path.Combine(extractedDirectory, "MS", "x86");
         var hasWrapperSource = Directory.Exists(wrapperSourceDirectory);
@@ -238,13 +285,14 @@ internal static class GraphicsBootstrap
                 }
             }
 
+            // Seed dgVoodoo.conf only when the game folder has none. Never replace
+            // an existing conf: PLAY used to recopy the stock template whenever
+            // the file size changed, which stomped OutputAPI and other edits.
             var configSourcePath = Path.Combine(extractedDirectory, "dgVoodoo.conf");
             var configDestinationPath = Path.Combine(installDirectory, "DgVoodoo.conf");
-            if (File.Exists(configSourcePath)
-                && (!File.Exists(configDestinationPath)
-                    || new FileInfo(configSourcePath).Length != new FileInfo(configDestinationPath).Length))
+            if (File.Exists(configSourcePath) && !File.Exists(configDestinationPath))
             {
-                File.Copy(configSourcePath, configDestinationPath, overwrite: true);
+                File.Copy(configSourcePath, configDestinationPath);
                 copiedAny = true;
             }
         }
@@ -256,6 +304,30 @@ internal static class GraphicsBootstrap
         }
 
         return copiedAny || File.Exists(Path.Combine(installDirectory, "DDraw.dll"));
+    }
+
+    internal static void RemoveLocalDirectDrawOverrides(string installDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
+        {
+            return;
+        }
+
+        foreach (var fileName in new[] { "DDraw.dll", "D3DImm.dll" })
+        {
+            var path = Path.Combine(installDirectory, fileName);
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
+                // Wine must not load a leftover Windows dgVoodoo ddraw.dll.
+            }
+        }
     }
 
     internal static bool DisableWatermarks(string configPath)

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Aetherium Play
+Comment=Asheron's Call: Dark Majesty on play.aetherium.ac
+Exec=aetherium-play
+Terminal=true
+Categories=Game;
+StartupNotify=true

@@ -5,7 +5,9 @@ namespace AcLegacyLauncher;
 internal static class AetheriumInstallationConfiguration
 {
     public const string DefaultHost = "play.aetherium.ac";
-    public const int DefaultPort = 9000;
+    public const int WhiteServerPort = 9000;
+    public const int RedServerPort = 9100;
+    public const int DefaultPort = WhiteServerPort;
     private const string GamePathMarkerFileName = "game.install.path";
 
     public static void Configure(string gameInstallDirectory, string? skinName = null)
@@ -48,6 +50,12 @@ internal static class AetheriumInstallationConfiguration
         File.WriteAllText(
             configPath,
             JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+
+        if (WineRuntime.IsWine)
+        {
+            GraphicsBootstrap.SeedSafeGraphicsSettings();
+            GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
+        }
     }
 
     public static string? TryReadGameInstallDirectory()

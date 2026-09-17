@@ -32,21 +32,28 @@ compatibility files.
 AetheriumPlay/
 ├── AetheriumLauncher/     # Self-contained .NET 8 WinForms launcher (x86)
 ├── Installer/             # Inno Setup scripts + player-facing notices
+├── linux/                 # Bundled-Wine wrapper (experimental; no native client)
 ├── ThirdParty/            # Vendored MegaApiClient source (MIT)
 ├── tools/dgvoodoo/        # Bundled dgVoodoo binaries (no source; see NOTICE)
-├── artifacts/             # Build output (gitignored) → AetheriumPlaySetup.exe
+├── artifacts/             # Build output (gitignored) → setup.exe + Linux tarball
 └── Build.ps1              # One-shot release build
 ```
 
 ## What players get
 
-`AetheriumPlaySetup.exe` downloads and verifies the disclosed Dark Majesty
-installer and `client.exe`, runs the original InstallShield wizard, closes the
-obsolete Turbine launcher, installs Aetherium Launcher, and presets
-`play.aetherium.ac:9000`.
+Windows players run `AetheriumPlaySetup.exe`. It downloads and verifies the
+disclosed Dark Majesty installer and `client.exe`, runs the original
+InstallShield wizard, closes the obsolete Turbine launcher, installs Aetherium
+Launcher, and presets `play.aetherium.ac:9000`. The player does not need to
+install .NET separately. Release builds carry the x86 .NET Desktop runtime
+required by the launcher.
 
-The player does not need to install .NET separately. Release builds carry the
-x86 .NET Desktop runtime required by the launcher.
+Linux players download `AetheriumPlay-linux.tar.gz` from the same GitHub
+Release, extract it, and run `AetheriumPlay.sh`. That script downloads a
+private Wine runtime, extracts Dark Majesty from the cabinets without the 2004
+wizard, and starts the same Windows launcher so A09 still runs. Players do not
+install Wine themselves. This is not a native Linux client. Player steps:
+[`linux/README.md`](linux/README.md).
 
 Launcher features:
 
@@ -180,15 +187,26 @@ csproj, and Inno Setup all consume it.
 .\Build.ps1
 ```
 
-Output: `artifacts\installer\AetheriumPlaySetup.exe`
+Output: `artifacts\installer\AetheriumPlaySetup.exe` and
+`artifacts\linux\AetheriumPlay-linux.tar.gz`.
+
+### Linux (experimental)
+
+Player install is in [`linux/README.md`](linux/README.md). `.\Build.ps1` (or
+`-LauncherOnly`) writes the tarball; the **Release** workflow attaches it next
+to `AetheriumPlaySetup.exe`. Linux shares the Windows tag and DDD canary gate.
+There is no separate Linux release. Linux players re-download the tarball;
+**Help → Check for Updates** stays Windows-only.
 
 ## Releases & auto-update
 
 Player-facing version notes are in [`CHANGELOG.md`](CHANGELOG.md).
 
-Players' launchers check GitHub Releases on startup (and via **Help → Check for
-Updates**). If a newer `AetheriumPlaySetup.exe` is published, they get a popup
-to download and run the installer.
+Players' Windows launchers check GitHub Releases on startup (and via **Help →
+Check for Updates**). If a newer `AetheriumPlaySetup.exe` is published, they get
+a popup to download and run the installer. Linux players download the newer
+`AetheriumPlay-linux.tar.gz` from that same release; the in-app updater does
+not install it.
 
 Update feed (edit if the repo moves): `Vanquish-6/Aetherium-Play` in
 `AetheriumLauncher\UpdateChecker.cs`.
@@ -218,7 +236,9 @@ git push origin v1.0.8
    remote-mutation monitor, and forced-launcher-termination integrations before
    creating the GitHub Release. The required recorded canaries are the
    live/resumed DDD recovery gate. The release attaches
-   `AetheriumPlaySetup.exe` and its `.sha256`.
+   `AetheriumPlaySetup.exe`, `AetheriumPlay-linux.tar.gz`, and their `.sha256`
+   files. The Linux tarball is the same win-x86 launcher plus
+   `linux/AetheriumPlay.sh`; do not add a second Linux-only DDD canary.
 
 Tag pushes do not publish automatically: the destructive DDD recovery evidence
 is a required manual release gate.

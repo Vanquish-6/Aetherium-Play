@@ -1288,6 +1288,13 @@ catch (ArgumentException)
 
 True(unknownUiArgumentRejected, "unknown UI argument rejection");
 
+True(
+    WineRuntime.IsWine || WineRuntime.LaunchDetail.Length == 0,
+    "native Windows launch detail is empty");
+True(
+    !WineRuntime.IsWine || WineRuntime.LaunchDetail.Contains("Wine", StringComparison.Ordinal),
+    "Wine launch detail names the compatibility layer");
+
 Console.WriteLine(
     "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
     "exact client signatures, SpellRegion duration-text hitch bypass, " +

@@ -35,6 +35,25 @@ internal static class UpdateChecker
     {
         try
         {
+            if (WineRuntime.IsWine)
+            {
+                report?.Invoke("Linux: download AetheriumPlay-linux.tar.gz from GitHub Releases.");
+                if (interactive)
+                {
+                    MessageBox.Show(
+                        owner,
+                        "Linux is not updated by the Windows installer.\n\n" +
+                        "Download AetheriumPlay-linux.tar.gz from:\n" +
+                        $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases\n\n" +
+                        "Extract it and run AetheriumPlay.sh again. Game data stays in the Aetherium Play data folder.",
+                        "Aetherium Launcher",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+
+                return;
+            }
+
             report?.Invoke("Checking for launcher updates...");
             var release = await GetLatestReleaseAsync(cancellationToken).ConfigureAwait(true);
             if (release is null || release.TagVersion is null)

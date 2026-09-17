@@ -223,8 +223,29 @@ internal static class ClientAntiTamper
                 nameof(suspendedProcessHandle));
         }
 
-        var clientJob = CreateKillOnCloseClientJob(suspendedProcessHandle);
-        return new ClientAntiTamperContainment(clientJob.Dispose);
+        try
+        {
+            var clientJob = CreateKillOnCloseClientJob(suspendedProcessHandle);
+            return new ClientAntiTamperContainment(clientJob.Dispose);
+        }
+        catch (Win32Exception ex) when (WineRuntime.IsWine)
+        {
+            WriteViolationLog(
+                0,
+                "Wine job-object containment unavailable; using terminate-on-launcher-exit. " +
+                ex.Message);
+            return new ClientAntiTamperContainment(() =>
+            {
+                try
+                {
+                    NativeProcess.TerminateProcess(suspendedProcessHandle, 1);
+                }
+                catch
+                {
+                    // The Linux wrapper still kills wineserver when the script exits.
+                }
+            });
+        }
     }
 
     internal static void VerifyRuntimeState(

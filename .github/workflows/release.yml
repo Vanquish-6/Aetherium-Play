@@ -92,6 +92,11 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash
           "$hash *AetheriumPlaySetup.exe" | Set-Content `
             -LiteralPath "$setup.sha256" -Encoding ascii -NoNewline
+          $linux = "artifacts\linux\AetheriumPlay-linux.tar.gz"
+          if (-not (Test-Path $linux)) { throw "Missing $linux" }
+          $linuxHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $linux).Hash
+          "$linuxHash *AetheriumPlay-linux.tar.gz" | Set-Content `
+            -LiteralPath "$linux.sha256" -Encoding ascii -NoNewline
 
       - name: Verify active scan and native containment
         shell: pwsh
@@ -125,8 +130,12 @@ jobs:
           $dddCanaryEvidence = $env:DDD_CANARY_EVIDENCE.Trim()
           $setup = "artifacts\installer\AetheriumPlaySetup.exe"
           $checksum = "$setup.sha256"
+          $linux = "artifacts\linux\AetheriumPlay-linux.tar.gz"
+          $linuxChecksum = "$linux.sha256"
           if (-not (Test-Path $setup)) { throw "Missing $setup" }
           if (-not (Test-Path $checksum)) { throw "Missing $checksum" }
+          if (-not (Test-Path $linux)) { throw "Missing $linux" }
+          if (-not (Test-Path $linuxChecksum)) { throw "Missing $linuxChecksum" }
           if ([string]::IsNullOrWhiteSpace($dddCanaryEvidence)) {
             throw "Recorded shared-bad-DAT recovery evidence is required."
           }
@@ -146,19 +155,20 @@ jobs:
           $notes = @"
           Aetherium Play $version
 
-          Install or upgrade with AetheriumPlaySetup.exe.
-          First-time setup waits for the original Dark Majesty wizard, refuses the Aetherium Play folder, and keeps the ~230 MB download visible on slow connections.
+          Windows: install or upgrade with AetheriumPlaySetup.exe.
+          Linux (experimental): extract AetheriumPlay-linux.tar.gz and run AetheriumPlay.sh. Do not install Wine yourself. This is not a native Linux client.
+          First-time Windows setup waits for the original Dark Majesty wizard, refuses the Aetherium Play folder, and keeps the ~230 MB download visible on slow connections.
           Exact source revision: https://github.com/${{ github.repository }}/commit/$sourceSha
-          SHA-256: attached AetheriumPlaySetup.exe.sha256
+          SHA-256: attached AetheriumPlaySetup.exe.sha256 and AetheriumPlay-linux.tar.gz.sha256
           Authenticode status: unsigned
           Shared-bad-DAT forced-termination canary: $dddCanaryEvidence
-          Existing launchers check this release on startup (Help → Check for Updates).
+          Windows launchers check this release on startup (Help → Check for Updates). Linux players re-download the tarball.
           "@
 
           if (gh release view $tag 2>$null) {
             throw "Release $tag already exists. Refusing to replace published binaries; use a new version/tag."
           } else {
-            gh release create $tag $setup $checksum `
+            gh release create $tag $setup $checksum $linux $linuxChecksum `
               --target $sourceSha `
               --title "Aetherium Play $version" `
               --notes $notes

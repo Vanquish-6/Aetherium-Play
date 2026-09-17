@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Experimental Linux wrapper that downloads a private Wine 10 staging wow64
+  runtime, extracts Dark Majesty from the original cabinets without the 2004
+  wizard, and starts the existing Windows launcher so A09 still runs. Players
+  do not install Wine themselves. dgVoodoo is skipped under Wine. GitHub
+  Releases attach `AetheriumPlay-linux.tar.gz` next to the Windows setup.
+
 ## 1.0.30 - 2026-08-27
 
 ### Fixed

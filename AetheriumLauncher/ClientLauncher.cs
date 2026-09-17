@@ -53,7 +53,7 @@ public static class ClientLauncher
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
 
-            if (config.SeedSafeGraphics)
+            if (WineRuntime.IsWine || config.SeedSafeGraphics)
             {
                 GraphicsBootstrap.SeedSafeGraphicsSettings();
                 GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
@@ -61,7 +61,9 @@ public static class ClientLauncher
             }
 
             GraphicsBootstrap.ApplySoloCaptureMouseSettings(workingDirectory);
-            graphicsDetail = "Solo display: CaptureMouse=true; Alt+Enter enabled.";
+            graphicsDetail = WineRuntime.IsWine
+                ? "Wine DirectDraw (dgVoodoo skipped)."
+                : "Solo display: CaptureMouse=true; Alt+Enter enabled.";
         }
 
         var argumentParts = BuildArgumentParts(config);
@@ -208,6 +210,7 @@ public static class ClientLauncher
                     dddAccelerationDetail,
                     antiTamperDetail,
                     vintageDecalDetail,
+                    WineRuntime.LaunchDetail,
                 }
                     .Where(detail => !string.IsNullOrWhiteSpace(detail))),
         };
