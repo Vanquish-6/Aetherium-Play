@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.31 - 2026-09-16
 
 ### Added
 
@@ -9,6 +9,7 @@
   wizard, and starts the existing Windows launcher so A09 still runs. Players
   do not install Wine themselves. dgVoodoo is skipped under Wine. GitHub
   Releases attach `AetheriumPlay-linux.tar.gz` next to the Windows setup.
+- White and Red server buttons on the parchment (ports 9000 and 9100).
 
 ## 1.0.30 - 2026-08-27
 
