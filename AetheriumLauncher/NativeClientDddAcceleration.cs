@@ -210,12 +210,17 @@ internal sealed class NativeClientDddAccelerationInstallation
 ///
 /// Two CLCache detours drain inbound DAT work faster and hold the patch UI
 /// incomplete until both writers are idle. A third detour replaces
-/// SpellRegion::Update so open buff/debuff duration labels skip ClearAllText
-/// when the m:ss string is unchanged. Number-panel hitch skips hook the
-/// integer writers that already have the value (TextRegion::SetInt signed
-/// and unsigned, StatRegion::SetInt, InfoBox::SetAvailable, and
-/// AllegPanel::SetXPChange). Global TextRegion::SetText stays stock: 1.0.26
-/// detoured it and that prevented the client from opening.
+/// SpellRegion::Update so open buff/debuff duration labels rewrite the
+/// existing m:ss glyphs in place. SpellsInEffectPanel::Global_Loop already
+/// calls Update at most once per second, so skip-if-same-string never fired
+/// and SetText still ran ClearAllText on every icon. Same-length ticks now
+/// poke GT_CHARACTER glyphs and skip SetText, ClearAllText, and vfunc +0x38.
+/// Length changes (9:59 to 10:00) still take the stock SetText path.
+/// Number-panel hitch skips hook the integer writers that already have the
+/// value (TextRegion::SetInt signed and unsigned, StatRegion::SetInt,
+/// InfoBox::SetAvailable, and AllegPanel::SetXPChange). Global
+/// TextRegion::SetText stays stock: 1.0.26 detoured it and that prevented
+/// the client from opening.
 ///
 /// The verified retail layout exposes each Asynch_Cache pending-request count
 /// at +0x60. Inbound consumption pauses when either writer reaches the
@@ -884,7 +889,7 @@ internal static class NativeClientDddAcceleration
             var installation = new NativeClientDddAccelerationInstallation(
                 $"Accelerated DAT repair enabled ({CapabilityVersion}; {profile.Id}; up to " +
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active; " +
-                "SpellRegion duration-text hitch bypass active; number-label hitch bypass active).",
+                "SpellRegion duration-text hitch bypass active (in-place m:ss glyphs); number-label hitch bypass active).",
                 profile,
                 [
                     new RemotePatchRegion(
@@ -1335,7 +1340,6 @@ internal static class NativeClientDddAcceleration
         var timer = Address(imageBase + hook.TimerCurTimeRva);
         var spellDuration = Address(imageBase + hook.SpellDurationRva);
         var ftol2 = Address(imageBase + hook.Ftol2Rva);
-        var getText = Address(imageBase + hook.GetTextRva);
         var setText = Address(imageBase + hook.SetTextRva);
         var sprintfIat = Address(imageBase + hook.SprintfIatRva);
 
@@ -1427,18 +1431,48 @@ internal static class NativeClientDddAcceleration
         EmitAbsolute(sprintfIat);
         code.Emit(0x83, 0xC4, 0x10);                          // add esp, 10h
 
+        // Same glyph walk as the SetInt skip, then poke ASCII in place.
+        // GetText+strcmp was a no-op at the 1Hz Global_Loop rate: m:ss almost
+        // always changed, so SetText still ClearAllText'd every icon.
         code.Emit(0x8B, 0x8E, 0xC4, 0, 0, 0);                 // mov ecx, duration_txt
-        EmitCall(getText);
+        code.Emit(0x85, 0xC9);                                // test ecx, ecx
+        code.JumpIfShort(0x84, "done");                      // jz done
+        code.Emit(0x83, 0xB9);                                // cmp lineCount, 0
+        code.Emit(BitConverter.GetBytes(TextRegionLineCountOffset));
+        code.Emit(0x00);
+        code.JumpIfShort(0x8E, "need_set");                  // jle need_set
+        code.Emit(0x8B, 0x81);                                // mov eax, [ecx+lineBuff]
+        code.Emit(BitConverter.GetBytes(TextRegionLineBuffOffset));
+        code.Emit(0x85, 0xC0);                                // test eax, eax
+        code.JumpIfShort(0x84, "need_set");                  // jz need_set
+        code.Emit(0x8B, 0x00);                                // mov eax, [eax]
+        code.Emit(0x85, 0xC0);                                // test eax, eax
+        code.JumpIfShort(0x84, "need_set");                  // jz need_set
+        code.Emit(0x8B, 0x78, (byte)GlyphStringHeadOffset);    // mov edi, [eax+4]
         code.Emit(0x8D, 0x55, 0xE0);                          // lea edx, [ebp-20h]
-        code.Mark("cmp_loop");
-        code.Emit(0x8A, 0x08);                                // mov cl, [eax]
-        code.Emit(0x3A, 0x0A);                                // cmp cl, [edx]
-        code.JumpIf(0x85, "need_set");                       // jne need_set
-        code.Emit(0x84, 0xC9);                                // test cl, cl
-        code.JumpIf(0x84, "done");                           // jz done
-        code.Emit(0x40);                                      // inc eax
+
+        code.Mark("patch_loop");
+        code.Emit(0x8A, 0x02);                                // mov al, [edx]
+        code.Emit(0x84, 0xC0);                                // test al, al
+        code.JumpIfShort(0x84, "trail");                     // jz trail
+        code.Emit(0x85, 0xFF);                                // test edi, edi
+        code.JumpIfShort(0x84, "need_set");                  // jz need_set
+        code.Emit(0x83, 0x7F, (byte)GlyphTypeOffset, 0);      // cmp [edi+type], 0
+        code.JumpIfShort(0x85, "need_set");                  // jnz need_set
+        code.Emit(0x88, 0x47, (byte)GlyphCharOffset);         // mov [edi+char], al
+        code.Emit(0x8B, 0x3F);                                // mov edi, [edi]
         code.Emit(0x42);                                      // inc edx
-        code.Jump("cmp_loop");
+        code.JumpShort("patch_loop");
+
+        code.Mark("trail");
+        code.Emit(0x85, 0xFF);                                // test edi, edi
+        code.JumpIfShort(0x84, "done");                      // jz done
+        code.Emit(0x83, 0x7F, (byte)GlyphTypeOffset, 0);      // cmp [edi+type], 0
+        code.JumpIfShort(0x85, "need_set");                  // jnz need_set
+        code.Emit(0x80, 0x7F, (byte)GlyphCharOffset, 0x0A);   // cmp [edi+char], '\n'
+        code.JumpIfShort(0x85, "need_set");                  // jnz need_set
+        code.Emit(0x8B, 0x3F);                                // mov edi, [edi]
+        code.JumpShort("trail");
 
         code.Mark("need_set");
         code.Emit(0x6A, 0x00);                                // push 0
@@ -2256,6 +2290,7 @@ internal static class NativeClientDddAcceleration
         private readonly Dictionary<string, int> _labels =
             new(StringComparer.Ordinal);
         private readonly List<(int DisplacementOffset, string Label)> _fixups = [];
+        private readonly List<(int DisplacementOffset, string Label)> _shortFixups = [];
 
         internal int Position => _bytes.Count;
 
@@ -2275,10 +2310,22 @@ internal static class NativeClientDddAcceleration
             AddFixup(label);
         }
 
+        internal void JumpIfShort(byte conditionOpcode, string label)
+        {
+            Emit((byte)(conditionOpcode - 0x10));
+            AddShortFixup(label);
+        }
+
         internal void Jump(string label)
         {
             Emit(0xE9);
             AddFixup(label);
+        }
+
+        internal void JumpShort(string label)
+        {
+            Emit(0xEB);
+            AddShortFixup(label);
         }
 
         internal byte[] Build()
@@ -2297,6 +2344,23 @@ internal static class NativeClientDddAcceleration
                     displacement);
             }
 
+            foreach (var (displacementOffset, label) in _shortFixups)
+            {
+                if (!_labels.TryGetValue(label, out var targetOffset))
+                {
+                    throw new InvalidOperationException($"Undefined x86 label: {label}");
+                }
+
+                var displacement = targetOffset - (displacementOffset + 1);
+                if (displacement is < sbyte.MinValue or > sbyte.MaxValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Short jump to {label} is {displacement} bytes.");
+                }
+
+                result[displacementOffset] = (byte)displacement;
+            }
+
             return result;
         }
 
@@ -2305,6 +2369,13 @@ internal static class NativeClientDddAcceleration
             var displacementOffset = Position;
             Emit(0, 0, 0, 0);
             _fixups.Add((displacementOffset, label));
+        }
+
+        private void AddShortFixup(string label)
+        {
+            var displacementOffset = Position;
+            Emit(0);
+            _shortFixups.Add((displacementOffset, label));
         }
     }
 }

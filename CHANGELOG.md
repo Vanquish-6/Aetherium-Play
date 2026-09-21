@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Buff-window hitch. `SpellsInEffectPanel::Global_Loop` already calls
+  `SpellRegion::Update` at most once per second, so skip-if-same-string never
+  fired and `SetText` still ran `ClearAllText` on every icon. Same-length `m:ss`
+  ticks now poke the existing ASCII glyphs and skip that rebuild. Length changes
+  (`9:59` to `10:00`) still take stock `SetText`.
+- First-time MEGA downloads that asked for HTTP storage hosts (`:80`) and
+  failed DNS with `One or more errors occurred.` Downloads now request HTTPS
+  (`ssl=2`), retry a few times if a storage host is unreachable, and show a
+  DNS/network message instead of the AggregateException wrapper.
+
 ## 1.0.31 - 2026-09-16
 
 ### Added

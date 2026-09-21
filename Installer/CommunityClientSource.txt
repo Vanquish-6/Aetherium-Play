@@ -39,8 +39,10 @@ overlapping shares. The upstream library always uses the first key, but that
 entry is obsolete for this client.exe and produces an invalid checksum.
 The narrow, source-visible fix first introduced in launcher setup 1.0.5 remains
 present in 1.0.30: it tries each advertised node key and accepts one only when it
-decrypts valid MEGA node attributes. The exact executable size and SHA-256
-checks above remain the final acceptance gate.
+decrypts valid MEGA node attributes. Current source also requests HTTPS MEGA
+storage URLs (`ssl=2`) and retries if a temporary storage host fails DNS or
+connect. The exact executable size and SHA-256 checks above remain the final
+acceptance gate.
 
 Only client.exe is handled by this step. portal.dat and cell.dat are updated
 separately by DDD from the game server selected in the launcher.

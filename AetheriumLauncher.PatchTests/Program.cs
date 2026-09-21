@@ -240,6 +240,18 @@ var renamedWindowMatch = new RunningProgramIdentity(
     null);
 True(ClientAntiTamper.IsKnownCheatEngineIdentity(renamedWindowMatch),
     "renamed Cheat Engine exact top-level title");
+
+var megaDnsFailure = new HttpRequestException(
+    "No such host is known. (gfs270n223.userstorage.mega.co.nz:80)");
+True(
+    DownloadProgressForm.FormatSetupFailure(megaDnsFailure)
+        .Contains("could not reach MEGA", StringComparison.OrdinalIgnoreCase),
+    "MEGA storage DNS failure message");
+Equal(
+    "bad hash",
+    DownloadProgressForm.FormatSetupFailure(new InvalidDataException("bad hash")),
+    "non-DNS setup failure message");
+
 Equal(
     processNameMatch,
     ClientAntiTamper.FindKnownMemoryEditor([safeBrowser, processNameMatch])!,
@@ -431,18 +443,41 @@ var spellWrapperAddress =
 var placedSpellWrapper = remoteCode[
     NativeClientDddAcceleration.SpellRegionWrapperOffset..
     (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)];
+var spellDurationAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.SpellDurationRva)));
+var spellFtol2Address = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.Ftol2Rva)));
+var spellGetTextAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.TextRegionGetTextRva)));
+var spellSetTextAddress = new IntPtr(unchecked((int)(
+    NativeClientDddAcceleration.PreferredImageBase +
+    NativeClientDddAcceleration.TextRegionSetTextRva)));
+var spellKnownRelCalls = new HashSet<IntPtr>
+{
+    spellDurationAddress,
+    spellFtol2Address,
+    spellGetTextAddress,
+    spellSetTextAddress,
+};
 var spellRelCalls = new List<IntPtr>();
 var spellAbsCalls = new List<IntPtr>();
 for (var i = 0; i + 5 < placedSpellWrapper.Length; i++)
 {
     if (placedSpellWrapper[i] == 0xE8)
     {
-        spellRelCalls.Add(
-            NativeClientDddAcceleration.DecodeRelativeTarget(
-                placedSpellWrapper,
-                i,
-                spellWrapperAddress));
-        i += 4;
+        var target = NativeClientDddAcceleration.DecodeRelativeTarget(
+            placedSpellWrapper,
+            i,
+            spellWrapperAddress);
+        if (spellKnownRelCalls.Contains(target))
+        {
+            spellRelCalls.Add(target);
+            i += 4;
+        }
+
         continue;
     }
 
@@ -454,33 +489,29 @@ for (var i = 0; i + 5 < placedSpellWrapper.Length; i++)
     }
 }
 
-Equal(5, spellRelCalls.Count, "SpellRegion wrapper relative-call count");
+Equal(4, spellRelCalls.Count, "SpellRegion wrapper relative-call count");
 True(
-    spellRelCalls.Contains(new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.SpellDurationRva)))),
+    spellRelCalls.Contains(spellDurationAddress),
     "SpellRegion wrapper calls SpellDuration");
 True(
-    spellRelCalls.Contains(new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.Ftol2Rva)))),
+    spellRelCalls.Contains(spellFtol2Address),
     "SpellRegion wrapper calls _ftol2");
 Equal(
     2,
-    spellRelCalls.Count(target => target == new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.Ftol2Rva)))),
+    spellRelCalls.Count(target => target == spellFtol2Address),
     "SpellRegion wrapper _ftol2 pair");
 True(
-    spellRelCalls.Contains(new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.TextRegionGetTextRva)))),
-    "SpellRegion wrapper calls GetText");
+    !spellRelCalls.Contains(spellGetTextAddress),
+    "SpellRegion wrapper does not call GetText");
 True(
-    spellRelCalls.Contains(new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.TextRegionSetTextRva)))),
+    spellRelCalls.Contains(spellSetTextAddress),
     "SpellRegion wrapper calls SetText");
+True(
+    placedSpellWrapper.AsSpan().IndexOf(new byte[] { 0x83, 0xB9, 0x0C, 0x01, 0x00, 0x00, 0x00 }) >= 0,
+    "SpellRegion wrapper compares duration lineCount");
+True(
+    placedSpellWrapper.AsSpan().IndexOf(new byte[] { 0x88, 0x47, 0x08 }) >= 0,
+    "SpellRegion wrapper pokes duration glyph characters");
 Equal(1, spellAbsCalls.Count, "SpellRegion wrapper sprintf IAT count");
 Equal(
     new IntPtr(unchecked((int)(
@@ -508,9 +539,9 @@ for (var i = 0; i + 5 < adminPlacedSpell.Length; i++)
 }
 
 True(
-    adminSpellRelCalls.Contains(new IntPtr(unchecked((int)(
+    !adminSpellRelCalls.Contains(new IntPtr(unchecked((int)(
         adminProfile.PreferredImageBase + adminProfile.SpellRegion.GetTextRva)))),
-    "admin SpellRegion wrapper calls GetText");
+    "admin SpellRegion wrapper does not call GetText");
 True(
     adminSpellRelCalls.Contains(new IntPtr(unchecked((int)(
         adminProfile.PreferredImageBase + adminProfile.SpellRegion.SetTextRva)))),
@@ -639,15 +670,25 @@ var highSpellPlaced = highRemoteCode[
     (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)];
 True(
     Enumerable.Range(0, highSpellPlaced.Length - 4).Any(index =>
-        highSpellPlaced[index] == 0xE8 &&
-        NativeClientDddAcceleration.DecodeRelativeTarget(
-            highSpellPlaced,
-            index,
-            highSpellWrapper) ==
-        new IntPtr(unchecked((int)(
-        NativeClientDddAcceleration.PreferredImageBase +
-        NativeClientDddAcceleration.TextRegionGetTextRva)))),
-    "high-address SpellRegion GetText call");
+    {
+        if (highSpellPlaced[index] != 0xE8)
+        {
+            return false;
+        }
+
+        try
+        {
+            return NativeClientDddAcceleration.DecodeRelativeTarget(
+                highSpellPlaced,
+                index,
+                highSpellWrapper) == spellSetTextAddress;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }),
+    "high-address SpellRegion SetText call");
 
 var setIntSignedSignature = NativeClientDddAcceleration.SetIntSignedSignatureForTest();
 Equal(32, setIntSignedSignature.Length, "signed SetInt signature length");
@@ -1297,7 +1338,7 @@ True(
 
 Console.WriteLine(
     "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
-    "exact client signatures, SpellRegion duration-text hitch bypass, " +
+    "exact client signatures, SpellRegion in-place duration-glyph hitch bypass, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
     "layouts, branches, and detours verified.");
 

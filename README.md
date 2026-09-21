@@ -76,6 +76,10 @@ Launcher features:
   tells players the ~230 MB download can take several minutes.
 - Version 1.0.30 fixes the 1.0.29 startup crash that expanded `{app}` before
   Inno Setup had initialized it.
+- Current source (unreleased) rewrites open buff/debuff `m:ss` duration labels
+  in place. Skip-if-same-string never fired: `SpellsInEffectPanel` already
+  updates once per second, so every tick still ran `ClearAllText`. Same-length
+  ticks poke existing glyphs; `9:59` to `10:00` still uses stock `SetText`.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
@@ -87,13 +91,16 @@ The launcher uses standard Windows process-memory APIs to install a handful of
 runtime hooks while an exact supported `client.exe` is suspended. Two of them
 increase the native cache drain rate, cap each native DAT writer at 32 pending
 operations, and keep the patch UI incomplete until both writers drain. A third
-replaces `SpellRegion::Update` so open buff/debuff duration labels skip a full
-text rebuild when the `m:ss` string has not changed. Number panels skip
-`ClearAllText` when `TextRegion::SetInt`, `StatRegion::SetInt`,
-`InfoBox::SetAvailable`, or `AllegPanel::SetXPChange` would rewrite the same
-value. Global `TextRegion::SetText` stays stock: 1.0.26 hooked it and that
-prevented the client from opening. The capability exists only in that process;
-the launcher does not patch the executable or DAT files on disk.
+replaces `SpellRegion::Update` so open buff/debuff duration labels rewrite the
+existing `m:ss` glyphs in place and skip `SetText`/`ClearAllText` when the
+string length is unchanged. Skip-if-same-string never helped: the panel already
+updates once per second, so every call changed the label and still rebuilt
+text. Number panels skip `ClearAllText` when `TextRegion::SetInt`,
+`StatRegion::SetInt`, `InfoBox::SetAvailable`, or `AllegPanel::SetXPChange`
+would rewrite the same value. Global `TextRegion::SetText` stays stock: 1.0.26
+hooked it and that prevented the client from opening. The capability exists
+only in that process; the launcher does not patch the executable or DAT files
+on disk.
 
 When the server's launcher requirement is enabled, only a login carrying the
 exact A09 capability marker is admitted. An older launcher or direct start
@@ -161,6 +168,7 @@ lives under `ThirdParty\MegaApiClient`. Local fixes:
 
 - Nested MEGA `/folder/<id>` URLs (library only understands the root share URL)
 - Nodes with multiple overlapping share keys (try each key until attributes decrypt)
+- Request HTTPS MEGA storage URLs (`ssl=2`) and retry if a storage host fails DNS/connect
 
 Regression: `ThirdParty\MegaApiClient\MegaApiClient.Tests\MultipleNodeKeys.cs`.
 

@@ -1,3 +1,5 @@
+using System.Net.Sockets;
+
 namespace AcLegacyLauncher;
 
 internal sealed class DownloadProgressForm : Form
@@ -97,13 +99,89 @@ internal sealed class DownloadProgressForm : Form
             Failure = ex;
             MessageBox.Show(
                 this,
-                ex.Message,
+                FormatSetupFailure(ex),
                 "Aetherium Play Setup",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             ExitCode = 1;
             allowClose = true;
             Close();
+        }
+    }
+
+    internal static string FormatSetupFailure(Exception exception)
+    {
+        var root = Unwrap(exception);
+        if (LooksLikeMegaStorageDnsFailure(exception))
+        {
+            return
+                "Aetherium Play could not reach MEGA's file servers." +
+                Environment.NewLine + Environment.NewLine +
+                "Windows could not find the MEGA download host. This is usually a DNS or network problem, or MEGA handed out a storage server that is briefly unavailable." +
+                Environment.NewLine + Environment.NewLine +
+                "Run Setup again. If it keeps failing, switch DNS to 1.1.1.1 or 8.8.8.8, or briefly disable VPN/filter software that may block mega.co.nz." +
+                Environment.NewLine + Environment.NewLine +
+                "Details: " + root.Message;
+        }
+
+        return root.Message;
+    }
+
+    private static Exception Unwrap(Exception exception)
+    {
+        while (exception is AggregateException aggregate &&
+               aggregate.InnerException is not null)
+        {
+            exception = aggregate.Flatten().InnerException!;
+        }
+
+        return exception;
+    }
+
+    private static bool LooksLikeMegaStorageDnsFailure(Exception exception)
+    {
+        foreach (var current in Flatten(exception))
+        {
+            if (current is SocketException socketException &&
+                socketException.SocketErrorCode is
+                    SocketError.HostNotFound or
+                    SocketError.TryAgain or
+                    SocketError.NoData)
+            {
+                return true;
+            }
+
+            var message = current.Message;
+            if (message.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) &&
+                message.Contains("mega.co.nz", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<Exception> Flatten(Exception exception)
+    {
+        var remaining = new Stack<Exception>();
+        remaining.Push(exception);
+        while (remaining.Count > 0)
+        {
+            var current = remaining.Pop();
+            yield return current;
+
+            if (current is AggregateException aggregate)
+            {
+                foreach (var inner in aggregate.InnerExceptions)
+                {
+                    remaining.Push(inner);
+                }
+            }
+            else if (current.InnerException is not null)
+            {
+                remaining.Push(current.InnerException);
+            }
         }
     }
 }

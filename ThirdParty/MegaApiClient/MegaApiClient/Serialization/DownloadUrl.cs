@@ -18,6 +18,12 @@
     [JsonProperty("g")]
     public int G => 1;
 
+    // MEGA's official SDK sends ssl=2 so the temporary storage URL is HTTPS.
+    // Without it, MEGA returns http://gfs*.userstorage.mega.co.nz:80/... which
+    // fails on networks that cannot resolve or reach those HTTP nodes.
+    [JsonProperty("ssl")]
+    public int Ssl => 2;
+
     [JsonProperty("n")]
     public string Id { get; private set; }
   }
@@ -32,6 +38,9 @@
 
     [JsonProperty("g")]
     public int G => 1;
+
+    [JsonProperty("ssl")]
+    public int Ssl => 2;
 
     [JsonProperty("p")]
     public string Id { get; private set; }

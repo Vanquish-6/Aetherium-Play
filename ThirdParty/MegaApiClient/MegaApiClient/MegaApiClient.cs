@@ -5,6 +5,8 @@
   using System.Globalization;
   using System.IO;
   using System.Linq;
+  using System.Net;
+  using System.Net.Sockets;
   using System.Security.Cryptography;
   using System.Text.RegularExpressions;
   using System.Threading;
@@ -597,9 +599,7 @@
 
       // Retrieve download URL
       var downloadRequest = node is PublicNode publicNode && publicNode.ParentId == null ? (RequestBase)new DownloadUrlRequestFromId(node.Id) : new DownloadUrlRequest(node);
-      var downloadResponse = Request<DownloadUrlResponse>(downloadRequest);
-
-      Stream dataStream = new BufferedStream(_webClient.GetRequestRaw(new Uri(downloadResponse.Url)));
+      Stream dataStream = OpenDownloadDataStream(downloadRequest, cancellationToken, out var downloadResponse);
 
       Stream resultStream = new MegaAesCtrStreamDecrypter(dataStream, downloadResponse.Size, nodeCrypto.Key, nodeCrypto.Iv, nodeCrypto.MetaMac);
 
@@ -634,9 +634,7 @@
 
       // Retrieve download URL
       var downloadRequest = new DownloadUrlRequestFromId(id);
-      var downloadResponse = Request<DownloadUrlResponse>(downloadRequest);
-
-      Stream dataStream = new BufferedStream(_webClient.GetRequestRaw(new Uri(downloadResponse.Url)));
+      Stream dataStream = OpenDownloadDataStream(downloadRequest, cancellationToken, out var downloadResponse);
 
       Stream resultStream = new MegaAesCtrStreamDecrypter(dataStream, downloadResponse.Size, key, iv, metaMac);
 
@@ -1223,6 +1221,136 @@
     #endregion
 
     #region Private methods
+
+    private Stream OpenDownloadDataStream(
+      RequestBase downloadRequest,
+      CancellationToken? cancellationToken,
+      out DownloadUrlResponse downloadResponse)
+    {
+      const int maxAttempts = 5;
+      Exception lastException = null;
+      downloadResponse = null;
+
+      for (var attempt = 1; attempt <= maxAttempts; attempt++)
+      {
+        if (cancellationToken.HasValue)
+        {
+          cancellationToken.Value.ThrowIfCancellationRequested();
+        }
+
+        downloadResponse = Request<DownloadUrlResponse>(downloadRequest);
+        try
+        {
+          return new BufferedStream(_webClient.GetRequestRaw(CreateHttpsDownloadUri(downloadResponse.Url)));
+        }
+        catch (Exception ex) when (attempt < maxAttempts && IsTransientStorageHostException(ex))
+        {
+          lastException = ex;
+          Wait(TimeSpan.FromMilliseconds(400 * attempt));
+        }
+      }
+
+      throw lastException ?? new InvalidOperationException("Failed to open MEGA download stream.");
+    }
+
+    private static Uri CreateHttpsDownloadUri(string url)
+    {
+      if (string.IsNullOrEmpty(url))
+      {
+        throw new ArgumentException("Invalid download URL");
+      }
+
+      var uri = new Uri(url);
+      if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+      {
+        return uri;
+      }
+
+      var builder = new UriBuilder(uri)
+      {
+        Scheme = Uri.UriSchemeHttps,
+        Port = -1
+      };
+      return builder.Uri;
+    }
+
+    private static bool IsTransientStorageHostException(Exception exception)
+    {
+      foreach (var current in EnumerateExceptionTree(exception))
+      {
+        if (current is SocketException socketException)
+        {
+          switch (socketException.SocketErrorCode)
+          {
+            case SocketError.HostNotFound:
+            case SocketError.TryAgain:
+            case SocketError.NoData:
+            case SocketError.HostUnreachable:
+            case SocketError.NetworkUnreachable:
+            case SocketError.TimedOut:
+            case SocketError.ConnectionRefused:
+            case SocketError.ConnectionReset:
+            case SocketError.NetworkReset:
+              return true;
+          }
+        }
+
+        if (current is WebException webException)
+        {
+          switch (webException.Status)
+          {
+            case WebExceptionStatus.NameResolutionFailure:
+            case WebExceptionStatus.ConnectFailure:
+            case WebExceptionStatus.Timeout:
+            case WebExceptionStatus.ReceiveFailure:
+            case WebExceptionStatus.SendFailure:
+            case WebExceptionStatus.ConnectionClosed:
+            case WebExceptionStatus.KeepAliveFailure:
+            case WebExceptionStatus.ProxyNameResolutionFailure:
+              return true;
+          }
+        }
+
+        if (!string.IsNullOrEmpty(current.Message) &&
+            current.Message.IndexOf("No such host is known", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
+    private static IEnumerable<Exception> EnumerateExceptionTree(Exception exception)
+    {
+      if (exception == null)
+      {
+        yield break;
+      }
+
+      var remaining = new Stack<Exception>();
+      remaining.Push(exception);
+      while (remaining.Count > 0)
+      {
+        var current = remaining.Pop();
+        yield return current;
+
+        if (current is AggregateException aggregate)
+        {
+          foreach (var inner in aggregate.InnerExceptions)
+          {
+            if (inner != null)
+            {
+              remaining.Push(inner);
+            }
+          }
+        }
+        else if (current.InnerException != null)
+        {
+          remaining.Push(current.InnerException);
+        }
+      }
+    }
 
     private void EnsureLoggedIn()
     {

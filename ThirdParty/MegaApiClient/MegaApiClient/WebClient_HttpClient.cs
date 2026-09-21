@@ -84,7 +84,9 @@ namespace CG.Web.MegaApiClient
 
     public Stream GetRequestRaw(Uri url)
     {
-      return _httpClient.GetStreamAsync(url).Result;
+      // GetAwaiter().GetResult() preserves the HttpRequestException instead of
+      // wrapping it in AggregateException ("One or more errors occurred").
+      return _httpClient.GetStreamAsync(url).ConfigureAwait(false).GetAwaiter().GetResult();
     }
 
     private Stream PostRequest(Uri url, Stream dataStream, string contentType) {
