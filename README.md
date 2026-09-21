@@ -76,10 +76,11 @@ Launcher features:
   tells players the ~230 MB download can take several minutes.
 - Version 1.0.30 fixes the 1.0.29 startup crash that expanded `{app}` before
   Inno Setup had initialized it.
-- Current source (unreleased) rewrites open buff/debuff `m:ss` duration labels
-  in place. Skip-if-same-string never fired: `SpellsInEffectPanel` already
-  updates once per second, so every tick still ran `ClearAllText`. Same-length
-  ticks poke existing glyphs; `9:59` to `10:00` still uses stock `SetText`.
+- Version 1.0.32 rewrites open buff/debuff `m:ss` duration labels in place.
+  Skip-if-same-string never fired: `SpellsInEffectPanel` already updates once
+  per second, so every tick still ran `ClearAllText`. Same-length ticks poke
+  existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
+  request HTTPS storage URLs and retry a dead host.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
