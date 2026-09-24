@@ -1,4 +1,7 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security;
 using System.Text;
 using Microsoft.Win32;
 
@@ -6,8 +9,26 @@ namespace AcLegacyLauncher;
 
 internal static class GraphicsBootstrap
 {
+    internal const string RepairGraphicsArgument = "--repair-graphics";
+
     private const string RegistrySubKey =
         @"Software\Classes\VirtualStore\MACHINE\SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00";
+
+    // client.exe reads these from HKLM\SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00
+    // (the 32-bit view). A saved DirectDrawDevice that no longer enumerates makes WinMain
+    // exit before the game window stays up. A non-elevated write only updates the
+    // VirtualStore overlay, so the real key has to be repaired too.
+    private static readonly string[] UserOverlaySubKeys =
+    [
+        RegistrySubKey,
+        @"Software\Classes\VirtualStore\MACHINE\SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00",
+    ];
+
+    private static readonly (RegistryView View, string SubKey)[] MachineKeys =
+    [
+        (RegistryView.Registry64, @"SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"),
+        (RegistryView.Registry32, @"SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00"),
+    ];
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr LoadLibrary(string lpFileName);
@@ -95,22 +116,201 @@ internal static class GraphicsBootstrap
         }
     }
 
-    private static void SeedGraphicsValues(RegistryKey key)
+    /// <summary>
+    /// Drops a saved 3D accelerator and forces the fullscreen hardware mode the
+    /// client can actually open. Runs on every Play and during setup.
+    /// </summary>
+    internal static void EnsureDisplayDeviceForLaunch()
     {
-        // Fullscreen avoids the GDI 16-bit desktop check in windowed mode (modern Windows is 32-bit).
+        RepairUserOverlay();
+        if (MachineGraphicsAreSafe() ||
+            (TryRepairMachineGraphics() && MachineGraphicsAreSafe()) ||
+            WineRuntime.IsWine)
+        {
+            return;
+        }
+
+        RequestElevatedRepair();
+        if (!MachineGraphicsAreSafe())
+        {
+            throw new InvalidOperationException(
+                "The saved 3D device is still set, so the game would close immediately. Press Play again.");
+        }
+    }
+
+    internal static int RepairMachineGraphicsFromElevatedProcess()
+    {
+        return TryRepairMachineGraphics() && MachineGraphicsAreSafe() ? 0 : 1;
+    }
+
+    internal static bool HasStaleDisplayDevice(RegistryKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return ReadDword(key, "UseHardware") != 1 ||
+               ReadDword(key, "DoubleBuffer") != 2 ||
+               ReadDword(key, "FullScreen") != 1 ||
+               HasValue(key, "DirectDrawDevice") ||
+               HasValue(key, "DirectDrawGUID");
+    }
+
+    internal static void ClearStaleDisplayDevice(RegistryKey key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
         key.SetValue("UseHardware", 1, RegistryValueKind.DWord);
         key.SetValue("DoubleBuffer", 2, RegistryValueKind.DWord);
         key.SetValue("FullScreen", 1, RegistryValueKind.DWord);
+        DeleteValueIfPresent(key, "DirectDrawDevice");
+        DeleteValueIfPresent(key, "DirectDrawGUID");
+    }
+
+    private static void SeedGraphicsValues(RegistryKey key)
+    {
+        // Fullscreen avoids the GDI 16-bit desktop check in windowed mode (modern Windows is 32-bit).
+        ClearStaleDisplayDevice(key);
         key.SetValue("ZBuffer2", 0, RegistryValueKind.DWord);
         key.SetValue("ScreenWidth", 800, RegistryValueKind.DWord);
         key.SetValue("ScreenHeight", 600, RegistryValueKind.DWord);
+    }
 
-        foreach (var valueName in new[] { "DirectDrawDevice", "DirectDrawGUID" })
+    private static void RepairUserOverlay()
+    {
+        foreach (var subKey in UserOverlaySubKeys)
         {
-            if (Array.IndexOf(key.GetValueNames(), valueName) >= 0)
+            try
             {
-                key.DeleteValue(valueName, throwOnMissingValue: false);
+                using var key = Registry.CurrentUser.OpenSubKey(subKey, writable: true);
+                if (key is not null)
+                {
+                    ClearStaleDisplayDevice(key);
+                }
             }
+            catch (UnauthorizedAccessException)
+            {
+                // The real HKLM repair still runs. An unwritable overlay cannot
+                // be the only copy the client sees when that key is absent.
+            }
+        }
+    }
+
+    private static bool MachineGraphicsAreSafe()
+    {
+        var sawKey = false;
+        foreach (var (view, subKey) in MachineKeys)
+        {
+            try
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = baseKey.OpenSubKey(subKey, writable: false);
+                if (key is null || HasStaleDisplayDevice(key))
+                {
+                    return false;
+                }
+
+                sawKey = true;
+            }
+            catch (PlatformNotSupportedException)
+            {
+                // 32-bit Windows has no separate 64-bit registry view.
+            }
+        }
+
+        return sawKey;
+    }
+
+    private static bool TryRepairMachineGraphics()
+    {
+        var denied = false;
+        foreach (var (view, subKey) in MachineKeys)
+        {
+            try
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = baseKey.CreateSubKey(subKey, writable: true);
+                if (key is null)
+                {
+                    denied = true;
+                    continue;
+                }
+
+                ClearStaleDisplayDevice(key);
+                if (HasStaleDisplayDevice(key))
+                {
+                    denied = true;
+                }
+            }
+            catch (PlatformNotSupportedException)
+            {
+                // 32-bit Windows has no separate 64-bit registry view.
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException)
+            {
+                denied = true;
+            }
+        }
+
+        return !denied;
+    }
+
+    private static void RequestElevatedRepair()
+    {
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            throw new InvalidOperationException(
+                "The game's saved 3D device has to be cleared before it can open. Start Aetherium Launcher again.");
+        }
+
+        Process? process;
+        try
+        {
+            process = Process.Start(new ProcessStartInfo
+            {
+                FileName = executablePath,
+                Arguments = RepairGraphicsArgument,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+            });
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            throw new InvalidOperationException(
+                "The game's saved 3D device was left in place, so the client would close immediately. Approve the Windows prompt and press Play again.");
+        }
+
+        using (process)
+        {
+            if (process is null)
+            {
+                throw new InvalidOperationException(
+                    "The saved 3D device could not be cleared, so the game would close immediately. Press Play again and approve the Windows prompt.");
+            }
+
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    "The saved 3D device could not be cleared, so the game would close immediately. Press Play again and approve the Windows prompt.");
+            }
+        }
+    }
+
+    private static int? ReadDword(RegistryKey key, string name)
+    {
+        return key.GetValue(name) is int value ? value : null;
+    }
+
+    private static bool HasValue(RegistryKey key, string name)
+    {
+        return key.GetValueNames().Any(value =>
+            value.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void DeleteValueIfPresent(RegistryKey key, string name)
+    {
+        if (HasValue(key, name))
+        {
+            key.DeleteValue(name, throwOnMissingValue: false);
         }
     }
 

@@ -97,6 +97,11 @@ Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Ca
 Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: dword; ValueName: "ZBuffer2"; ValueData: "0"; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: dword; ValueName: "ScreenWidth"; ValueData: "800"; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: dword; ValueName: "ScreenHeight"; ValueData: "600"; Flags: uninsdeletevalue
+; A saved accelerator name makes client.exe exit before its window stays up.
+Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: none; ValueName: "DirectDrawDevice"; Flags: deletevalue dontcreatekey
+Root: HKLM; Subkey: "SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: none; ValueName: "DirectDrawGUID"; Flags: deletevalue dontcreatekey
+Root: HKLM; Subkey: "SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: none; ValueName: "DirectDrawDevice"; Flags: deletevalue dontcreatekey
+Root: HKLM; Subkey: "SOFTWARE\Microsoft\Microsoft Games\Asheron's Call\1.00"; ValueType: none; ValueName: "DirectDrawGUID"; Flags: deletevalue dontcreatekey
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

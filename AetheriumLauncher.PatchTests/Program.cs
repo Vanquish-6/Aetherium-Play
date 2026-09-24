@@ -1,11 +1,153 @@
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
+using Microsoft.Win32;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using AcLegacyLauncher;
+
+if (args.Length == 2 &&
+    string.Equals(args[0], "--prove-display-repair", StringComparison.OrdinalIgnoreCase))
+{
+    return ProveDisplayRepair(args[1]);
+}
+
+static int ProveDisplayRepair(string installDirectory)
+{
+    var logPath = Path.Combine(Path.GetTempPath(), "aetherium-display-repair-proof.txt");
+    var lines = new List<string>();
+    Process? control = null;
+    ClientLaunchResult? launch = null;
+    try
+    {
+        var clientPath = Path.Combine(installDirectory, "client.exe");
+        if (!File.Exists(clientPath))
+        {
+            throw new FileNotFoundException("Missing client.exe.", clientPath);
+        }
+
+        const string KeyPath = @"SOFTWARE\WOW6432Node\Microsoft\Microsoft Games\Asheron's Call\1.00";
+        using (var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+        using (var key = baseKey.OpenSubKey(KeyPath, writable: true)
+            ?? throw new InvalidOperationException("The AC graphics key is missing or not writable."))
+        {
+            key.SetValue("DirectDrawDevice", "Retired GPU", RegistryValueKind.String);
+        }
+
+        lines.Add("planted=" + ReadDeviceName(KeyPath));
+        control = Process.Start(new ProcessStartInfo
+        {
+            FileName = clientPath,
+            WorkingDirectory = installDirectory,
+            Arguments = "-a proof -h play.aetherium.ac -p 9100",
+            UseShellExecute = false,
+        }) ?? throw new InvalidOperationException("The control client did not start.");
+        lines.Add("control=" + ObserveClient(control, TimeSpan.FromSeconds(5)));
+        StopProcess(control);
+
+        GraphicsBootstrap.EnsureDisplayDeviceForLaunch();
+        lines.Add("afterRepair=" + ReadDeviceName(KeyPath));
+
+        var configPath = Path.Combine(installDirectory, "launcher.json");
+        var config = JsonSerializer.Deserialize<LaunchConfig>(File.ReadAllText(configPath))
+            ?? throw new InvalidOperationException("launcher.json was empty.");
+        config.InstallPath = installDirectory;
+        launch = ClientLauncher.Start(config);
+        if (launch.Process is null)
+        {
+            throw new InvalidOperationException("Play did not return a client process.");
+        }
+
+        lines.Add("play=" + ObserveClient(launch.Process, TimeSpan.FromSeconds(8)));
+        return lines.Any(line => line.StartsWith("afterRepair=<missing>", StringComparison.Ordinal)) &&
+               lines.Any(line => line.StartsWith("play=", StringComparison.Ordinal) &&
+                                 line.Contains("alive=true", StringComparison.Ordinal))
+            ? 0
+            : 1;
+    }
+    catch (Exception ex)
+    {
+        lines.Add(ex.GetType().Name + ": " + ex.Message);
+        return 1;
+    }
+    finally
+    {
+        if (control is not null)
+        {
+            StopProcess(control);
+        }
+
+        if (launch?.Process is not null)
+        {
+            StopProcess(launch.Process);
+        }
+
+        launch?.AntiTamperGuard?.Dispose();
+        File.WriteAllText(logPath, string.Join(Environment.NewLine, lines));
+    }
+}
+
+static string ReadDeviceName(string keyPath)
+{
+    using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+    using var key = baseKey.OpenSubKey(keyPath, writable: false);
+    return key?.GetValue("DirectDrawDevice") as string ?? "<missing>";
+}
+
+static string ObserveClient(Process process, TimeSpan duration)
+{
+    var deadline = DateTime.UtcNow + duration;
+    string title = string.Empty;
+    while (DateTime.UtcNow < deadline)
+    {
+        process.Refresh();
+        if (process.HasExited)
+        {
+            return $"alive=false exit={process.ExitCode} title={title}";
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(process.MainWindowTitle))
+            {
+                title = process.MainWindowTitle;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between the refresh and the title read.
+        }
+
+        Thread.Sleep(250);
+    }
+
+    process.Refresh();
+    return $"alive={(process.HasExited ? "false" : "true")} title={title}";
+}
+
+static void StopProcess(Process process)
+{
+    try
+    {
+        process.Refresh();
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5_000);
+        }
+    }
+    catch (InvalidOperationException)
+    {
+        // Already gone.
+    }
+    catch (System.ComponentModel.Win32Exception)
+    {
+        // Access to the exiting process was lost.
+    }
+}
 
 static void Equal<T>(T expected, T actual, string label)
     where T : notnull
@@ -59,6 +201,33 @@ static int DecodeInternalNearBranch(byte[] code, int instructionOffset)
         code.AsSpan(displacementOffset, sizeof(int)));
     return instructionOffset + length + displacement;
 }
+
+const string GraphicsRepairTestKey = @"Software\AetheriumPlayTests\GraphicsRepair";
+Registry.CurrentUser.DeleteSubKeyTree(GraphicsRepairTestKey, throwOnMissingSubKey: false);
+using (var graphicsKey = Registry.CurrentUser.CreateSubKey(GraphicsRepairTestKey, writable: true)
+    ?? throw new InvalidOperationException("Could not create the graphics repair test key."))
+{
+    graphicsKey.SetValue("DirectDrawDevice", "Retired GPU");
+    graphicsKey.SetValue("DirectDrawGUID", new byte[16], RegistryValueKind.Binary);
+    graphicsKey.SetValue("UseHardware", 0, RegistryValueKind.DWord);
+    graphicsKey.SetValue("DoubleBuffer", 0, RegistryValueKind.DWord);
+    graphicsKey.SetValue("FullScreen", 0, RegistryValueKind.DWord);
+    graphicsKey.SetValue("ScreenWidth", 1600, RegistryValueKind.DWord);
+    True(GraphicsBootstrap.HasStaleDisplayDevice(graphicsKey), "stale display device detected");
+    GraphicsBootstrap.ClearStaleDisplayDevice(graphicsKey);
+    True(!GraphicsBootstrap.HasStaleDisplayDevice(graphicsKey), "stale display device cleared");
+    Equal(1600, (int)graphicsKey.GetValue("ScreenWidth")!, "resolution preserved");
+    True(
+        !graphicsKey.GetValueNames().Any(name =>
+            name.Equals("DirectDrawDevice", StringComparison.OrdinalIgnoreCase)),
+        "DirectDrawDevice removed");
+    True(
+        !graphicsKey.GetValueNames().Any(name =>
+            name.Equals("DirectDrawGUID", StringComparison.OrdinalIgnoreCase)),
+        "DirectDrawGUID removed");
+}
+
+Registry.CurrentUser.DeleteSubKeyTree(GraphicsRepairTestKey, throwOnMissingSubKey: false);
 
 var useTimeSignature = NativeClientDddAcceleration.SupportedSignatureForTest();
 Equal(32, useTimeSignature.Length, "UseTime signature length");
@@ -1775,6 +1944,8 @@ if (args is ["--job-kill-integration", var jobClientPath])
         }
     }
 }
+
+return 0;
 
 internal static class RemoteMemoryTest
 {

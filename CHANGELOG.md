@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.33 - 2026-09-24
+
+### Fixed
+
+- The client closes before its window stays up when a saved 3D accelerator
+  (`DirectDrawDevice` / `DirectDrawGUID`) is no longer present. Play and setup
+  now clear that saved device and force hardware fullscreen. The update
+  installer removes the same values. If Windows will not let the launcher
+  write the real key, Play asks for permission once.
+
 ## 1.0.32 - 2026-09-21
 
 ### Fixed

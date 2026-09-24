@@ -10,6 +10,15 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Length == 1 &&
+            string.Equals(
+                args[0],
+                GraphicsBootstrap.RepairGraphicsArgument,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return GraphicsBootstrap.RepairMachineGraphicsFromElevatedProcess();
+        }
+
         if (args.Length > 0 &&
             string.Equals(args[0], "--install-community-client", StringComparison.OrdinalIgnoreCase))
         {

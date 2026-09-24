@@ -51,6 +51,7 @@ internal static class AetheriumInstallationConfiguration
             configPath,
             JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 
+        GraphicsBootstrap.EnsureDisplayDeviceForLaunch();
         if (WineRuntime.IsWine)
         {
             GraphicsBootstrap.SeedSafeGraphicsSettings();

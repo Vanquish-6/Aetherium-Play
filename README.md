@@ -81,6 +81,10 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
+- Version 1.0.33 clears a saved 3D accelerator before Play. A `DirectDrawDevice`
+  value that no longer enumerates makes `client.exe` exit before its window
+  stays up. Setup deletes that value, and Play writes hardware fullscreen to
+  the key the client reads.
 - `--game-install <directory>` pins one launcher shortcut to a complete,
   physical local game installation without replacing the installer's normal
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,

@@ -49,6 +49,7 @@ public static class ClientLauncher
 
         if (prepareGraphics)
         {
+            GraphicsBootstrap.EnsureDisplayDeviceForLaunch();
             GraphicsBootstrap.EnsureDirectDrawWrapper(
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
