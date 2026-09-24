@@ -12,6 +12,11 @@ on modern Windows (windowed play, dual-client mouse capture tweaks, etc.).
 | `extracted/MS/x86/D3DImm.dll` | Companion Direct3D Immediate Mode DLL |
 | `extracted/dgVoodoo.conf` | Text config (`Version = 0x287` → dgVoodoo **2.87.x**) |
 
+The x86 binaries are dgVoodoo **2.87.5** (product version 2.8.7.5, built 14 September 2026).
+That release includes Dege’s fix for the Windows 11 26H1 (build 28000+) crash.
+`DDraw.dll` reports file version 4.7.1.3000. 2.87.5 is the build Dege republished
+after Microsoft Defender flagged 2.87.4.
+
 There is **no dgVoodoo source code** in this repository. Only redistributable
 binary components and a config file are included.
 

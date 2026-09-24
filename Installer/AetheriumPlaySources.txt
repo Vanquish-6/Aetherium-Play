@@ -65,7 +65,7 @@ source code):
 
   DDraw.dll
   D3DImm.dll
-  dgVoodoo.conf  (dgVoodoo 2.87.x)
+  dgVoodoo.conf  (dgVoodoo 2.87.5)
 
 Upstream: https://dege.freeweb.hu/dgVoodoo2/
 

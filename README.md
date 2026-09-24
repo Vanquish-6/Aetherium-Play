@@ -183,7 +183,7 @@ Closed-source DirectDraw/Direct3D wrapper by **Dege**. We ship only:
 
 - `tools\dgvoodoo\extracted\MS\x86\DDraw.dll`
 - `tools\dgvoodoo\extracted\MS\x86\D3DImm.dll`
-- `tools\dgvoodoo\extracted\dgVoodoo.conf` (2.87.x)
+- `tools\dgvoodoo\extracted\dgVoodoo.conf` (config `0x287`; binaries are 2.87.5)
 
 See [`tools\dgvoodoo\NOTICE.md`](tools/dgvoodoo/NOTICE.md) for purpose,
 upstream links, and redistribution summary. Aetherium does not own dgVoodoo and

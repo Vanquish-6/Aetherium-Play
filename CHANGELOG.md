@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.34 - 2026-09-24
+
+### Fixed
+
+- `client.exe` can crash inside dgVoodoo `DDraw.dll` on Windows 11 26H1
+  (build 28000 and above). The bundled wrapper was 2.87.2, file version
+  4.7.1.3000, built 16 May 2026, which matches that access violation. Play
+  now ships dgVoodoo 2.87.5 and replaces the game-folder DLLs when their
+  bytes change. `dgVoodoo.conf` is left alone.
+
 ## 1.0.33 - 2026-09-24
 
 ### Fixed

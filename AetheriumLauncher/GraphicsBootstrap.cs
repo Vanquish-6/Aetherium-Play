@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32;
 
@@ -477,8 +478,10 @@ internal static class GraphicsBootstrap
                 }
 
                 var destinationPath = Path.Combine(installDirectory, fileName);
-                if (!File.Exists(destinationPath)
-                    || new FileInfo(sourcePath).Length != new FileInfo(destinationPath).Length)
+                // 2.87.x builds share DDraw.dll file version 4.7.1.3000, and a
+                // later build can match the previous file size. Replace whenever
+                // the bytes differ so an already-installed wrapper still updates.
+                if (!File.Exists(destinationPath) || !FileContentsMatch(sourcePath, destinationPath))
                 {
                     File.Copy(sourcePath, destinationPath, overwrite: true);
                     copiedAny = true;
@@ -504,6 +507,20 @@ internal static class GraphicsBootstrap
         }
 
         return copiedAny || File.Exists(Path.Combine(installDirectory, "DDraw.dll"));
+    }
+
+    private static bool FileContentsMatch(string leftPath, string rightPath)
+    {
+        var leftInfo = new FileInfo(leftPath);
+        var rightInfo = new FileInfo(rightPath);
+        if (leftInfo.Length != rightInfo.Length)
+        {
+            return false;
+        }
+
+        using var left = File.OpenRead(leftPath);
+        using var right = File.OpenRead(rightPath);
+        return SHA256.HashData(left).AsSpan().SequenceEqual(SHA256.HashData(right));
     }
 
     internal static void RemoveLocalDirectDrawOverrides(string installDirectory)
