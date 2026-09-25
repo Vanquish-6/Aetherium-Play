@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.36 - 2026-09-25
+
+### Fixed
+
+- Two fullscreen clients, or Alt+Enter, could drop the Windows display mode.
+  The screen went black and monitor audio went with it. Play now keeps the
+  game in a desktop-sized fullscreen window, blocks monitor sleep while the
+  game is open, and turns Alt+Enter off.
+
 ## 1.0.35 - 2026-09-25
 
 ### Added

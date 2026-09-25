@@ -380,14 +380,27 @@ internal static class GraphicsBootstrap
 
     internal static void ApplySecondClientMouseSettings(string workingDirectory)
     {
+        ApplyDesktopSafeDisplaySettings(workingDirectory, secondClient: true);
+    }
+
+    /// <summary>
+    /// Exclusive fullscreen plus a sleeping monitor drops the display mode.
+    /// That blanks the desktop and the monitor's audio device. Alt+Enter is
+    /// the same mode switch, so it stays off. Fake fullscreen keeps the
+    /// client's fullscreen path without taking the display away from Windows.
+    /// </summary>
+    internal static void ApplyDesktopSafeDisplaySettings(string workingDirectory, bool secondClient)
+    {
         ApplyDgVoodooFlags(
             workingDirectory,
-            captureMouse: false,
+            captureMouse: secondClient ? false : null,
             fullScreenMode: null,
-            freeMouse: null,
+            freeMouse: secondClient ? true : null,
             centerAppWindow: null,
             appControlledScreenMode: null,
-            disableAltEnterToToggleScreenMode: null);
+            disableAltEnterToToggleScreenMode: true,
+            disableScreenSaver: true,
+            fullscreenAttributes: "fake");
     }
 
     private static void ApplyDgVoodooFlags(
@@ -397,7 +410,9 @@ internal static class GraphicsBootstrap
         bool? freeMouse,
         bool? centerAppWindow,
         bool? appControlledScreenMode,
-        bool? disableAltEnterToToggleScreenMode)
+        bool? disableAltEnterToToggleScreenMode,
+        bool? disableScreenSaver = null,
+        string? fullscreenAttributes = null)
     {
         var configPath = Path.Combine(workingDirectory, "DgVoodoo.conf");
         if (!File.Exists(configPath))
@@ -455,6 +470,16 @@ internal static class GraphicsBootstrap
                     line,
                     "DisableAltEnterToToggleScreenMode",
                     disableAltEnterToToggleScreenMode.Value);
+            }
+            else if (disableScreenSaver is not null &&
+                     line.StartsWith("DisableScreenSaver", StringComparison.OrdinalIgnoreCase))
+            {
+                updated = SetConfigFlag(line, "DisableScreenSaver", disableScreenSaver.Value);
+            }
+            else if (fullscreenAttributes is not null &&
+                     line.StartsWith("FullscreenAttributes", StringComparison.OrdinalIgnoreCase))
+            {
+                updated = SetConfigValue(line, "FullscreenAttributes", fullscreenAttributes);
             }
 
             if (updated is null || updated == line)
@@ -628,5 +653,23 @@ internal static class GraphicsBootstrap
         }
 
         return padding + (value ? "true" : "false");
+    }
+
+    private static string SetConfigValue(string line, string key, string value)
+    {
+        var equalsIndex = line.IndexOf('=');
+        if (equalsIndex < 0 ||
+            !line[..equalsIndex].Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+        {
+            return line;
+        }
+
+        var padding = line[..(equalsIndex + 1)] + " ";
+        while (padding.Length < 36)
+        {
+            padding += " ";
+        }
+
+        return padding + value;
     }
 }

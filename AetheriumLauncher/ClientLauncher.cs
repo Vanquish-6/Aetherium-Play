@@ -63,16 +63,15 @@ public static class ClientLauncher
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
 
-            if (config.AnotherClientRunning)
-            {
-                GraphicsBootstrap.ApplySecondClientMouseSettings(workingDirectory);
-            }
+            GraphicsBootstrap.ApplyDesktopSafeDisplaySettings(
+                workingDirectory,
+                secondClient: config.AnotherClientRunning);
 
             graphicsDetail = WineRuntime.IsWine
                 ? "Wine DirectDraw (dgVoodoo skipped)."
                 : config.AnotherClientRunning
-                    ? "Second client: CaptureMouse=false."
-                    : "Slot display is private; dgVoodoo mouse capture was left unchanged.";
+                    ? "Second client: fake fullscreen, free mouse, monitor sleep blocked."
+                    : "Fake fullscreen; Alt+Enter off; monitor sleep blocked.";
         }
 
         var argumentParts = BuildArgumentParts(config);
