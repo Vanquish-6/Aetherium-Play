@@ -12,6 +12,8 @@ public sealed class ClientLaunchResult
 
     public required Process? Process { get; init; }
 
+    public string SlotId { get; init; } = "1";
+
     public bool SeededSafeGraphics { get; init; }
 
     public string ResolvedDDrawPath { get; init; } = string.Empty;
@@ -43,41 +45,48 @@ public static class ClientLauncher
             RemoveLegacyMulticlientFolder(installDirectory, report);
         }
 
-        var seededSafeGraphics = false;
+        config.SyncSelectedSlotToLaunchFields();
+        var safeGraphics = prepareGraphics && (WineRuntime.IsWine || config.SeedSafeGraphics);
+        var slotEnvironment = ClientSlotStore.Prepare(
+            config.SelectedSlotId,
+            installDirectory,
+            safeGraphics);
+        SlotIsolationInjector.EnsureDllPresent();
+
+        var seededSafeGraphics = safeGraphics;
         string? graphicsDetail = null;
         var workingDirectory = installDirectory;
 
         if (prepareGraphics)
         {
-            GraphicsBootstrap.EnsureDisplayDeviceForLaunch();
             GraphicsBootstrap.EnsureDirectDrawWrapper(
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
 
-            if (WineRuntime.IsWine || config.SeedSafeGraphics)
+            if (config.AnotherClientRunning)
             {
-                GraphicsBootstrap.SeedSafeGraphicsSettings();
-                GraphicsBootstrap.SeedUserPreferencesDisplay(fullScreen: true);
-                seededSafeGraphics = true;
+                GraphicsBootstrap.ApplySecondClientMouseSettings(workingDirectory);
             }
 
-            GraphicsBootstrap.ApplySoloCaptureMouseSettings(workingDirectory);
             graphicsDetail = WineRuntime.IsWine
                 ? "Wine DirectDraw (dgVoodoo skipped)."
-                : "Solo display: CaptureMouse=true; Alt+Enter enabled.";
+                : config.AnotherClientRunning
+                    ? "Second client: CaptureMouse=false."
+                    : "Slot display is private; dgVoodoo mouse capture was left unchanged.";
         }
 
         var argumentParts = BuildArgumentParts(config);
         var arguments = BuildArgumentString(argumentParts);
 
-        // Suspend → optional vintage Decal inject → resume.
-        // Stock client single-instance behavior is left alone (no multiclient patch).
+        // Suspend → slot isolation → optional vintage Decal inject → resume.
+        // Isolation is an injected DLL. client.exe, portal.dat, and cell.dat stay shared.
         var process = NativeProcess.StartSuspendedClient(
             clientPath,
             workingDirectory,
             arguments,
             out var processHandle,
-            out var threadHandle);
+            out var threadHandle,
+            slotEnvironment.ToProcessEnvironment());
 
         NativeClientDddAccelerationInstallation? dddAcceleration = null;
         ClientAntiTamperContainment? containment = null;
@@ -104,6 +113,10 @@ public static class ClientLauncher
             }
             dddAccelerationDetail = dddAcceleration.Detail;
             report?.Invoke(dddAccelerationDetail);
+
+            SlotIsolationInjector.Inject(processHandle);
+            var isolationDetail = $"Slot {slotEnvironment.SlotId} settings are private.";
+            report?.Invoke(isolationDetail);
 
             var vintageDecalPackage = VintageDecalInjector.FindEnabledPackage(installDirectory);
             if (vintageDecalPackage is not null)
@@ -200,6 +213,7 @@ public static class ClientLauncher
             WorkingDirectory = workingDirectory,
             Arguments = arguments,
             Process = process,
+            SlotId = slotEnvironment.SlotId,
             AntiTamperGuard = antiTamper,
             SeededSafeGraphics = seededSafeGraphics,
             ResolvedDDrawPath = GraphicsBootstrap.DescribeResolvedDDrawDll(workingDirectory),
@@ -208,6 +222,7 @@ public static class ClientLauncher
                 new[]
                 {
                     graphicsDetail,
+                    $"Slot {slotEnvironment.SlotId} settings are private.",
                     dddAccelerationDetail,
                     antiTamperDetail,
                     vintageDecalDetail,

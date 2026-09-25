@@ -13,6 +13,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AetheriumLauncher\AetheriumLauncher.csproj" />
+    <None Include="..\AetheriumLauncher\SlotIsolation.dll" Link="SlotIsolation.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

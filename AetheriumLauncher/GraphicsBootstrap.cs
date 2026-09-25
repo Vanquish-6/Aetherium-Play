@@ -340,9 +340,23 @@ internal static class GraphicsBootstrap
         });
     }
 
+    internal static void RepairPrivateSlotGraphics(RegistryKey key, bool safeDefaults)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        if (safeDefaults)
+        {
+            SeedGraphicsValues(key);
+            return;
+        }
+
+        ClearStaleDisplayDevice(key);
+    }
+
     /// <summary>
     /// Solo play: restore dgVoodoo's normal captured-mouse behavior.
     /// Older builds forced dual-client CaptureMouse=false flags into client folders.
+    /// Launch no longer calls this. A second client sets CaptureMouse false once
+    /// and later launches leave that value alone.
     /// </summary>
     internal static void ApplySoloCaptureMouseSettings(string workingDirectory)
     {
@@ -362,6 +376,18 @@ internal static class GraphicsBootstrap
     internal static void ApplyInputFriendlyDgVoodooConfig(string workingDirectory)
     {
         ApplySoloCaptureMouseSettings(workingDirectory);
+    }
+
+    internal static void ApplySecondClientMouseSettings(string workingDirectory)
+    {
+        ApplyDgVoodooFlags(
+            workingDirectory,
+            captureMouse: false,
+            fullScreenMode: null,
+            freeMouse: null,
+            centerAppWindow: null,
+            appControlledScreenMode: null,
+            disableAltEnterToToggleScreenMode: null);
     }
 
     private static void ApplyDgVoodooFlags(

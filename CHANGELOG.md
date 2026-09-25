@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.35 - 2026-09-25
+
+### Added
+
+- Two account slots on the parchment. Each slot keeps its own login, Red or
+  White choice, and game settings. Both clients still launch from the install
+  folder, so world-file updates stay in one place. Retail
+  `Documents\Asheron's Call` and the machine graphics key are left alone.
+- A second client can open `portal.dat` and `cell.dat` while the first is
+  already running, instead of stopping with a missing-files message.
+
 ## 1.0.34 - 2026-09-24
 
 ### Fixed

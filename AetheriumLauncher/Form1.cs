@@ -89,7 +89,9 @@ public partial class Form1 : Form
     private readonly List<LedgerField> ledgerFields = new();
     private readonly List<ArcaneButton> toolButtons = new();
     private readonly object runtimeGuardLock = new();
-    private readonly HashSet<ClientAntiTamperRuntimeGuard> runtimeGuards = [];
+    private readonly Dictionary<string, RunningSlot> runningSlots = new();
+    private readonly AccountSlot slotOne = new() { Id = "1" };
+    private readonly AccountSlot slotTwo = new() { Id = "2" };
     private readonly string? startupInstallDirectory;
 
     private ZoneEraSurface? surface;
@@ -103,6 +105,12 @@ public partial class Form1 : Form
     private Label? helpChromeLabel;
     private Label? titleLabel;
     private Panel? titleRule;
+    private FlowLayoutPanel? slotChoice;
+    private readonly ToolTip slotToolTip = new();
+    private ArcaneButton? slotOneButton;
+    private ArcaneButton? slotTwoButton;
+    private string selectedSlotId = "1";
+    private bool suppressSlotEvents;
     private ContextMenuStrip? fileMenu;
     private ContextMenuStrip? toolsMenu;
     private ContextMenuStrip? helpMenu;
@@ -146,18 +154,19 @@ public partial class Form1 : Form
             return;
         }
 
-        ClientAntiTamperRuntimeGuard[] guards;
+        RunningSlot[] running;
         lock (runtimeGuardLock)
         {
-            guards = runtimeGuards.ToArray();
+            running = runningSlots.Values.ToArray();
         }
 
-        if (guards.Length != 0 &&
+        if (running.Length != 0 &&
             e.CloseReason is CloseReason.UserClosing or CloseReason.ApplicationExitCall)
         {
+            var clients = running.Length == 1 ? "the monitored game client" : "both monitored game clients";
             var choice = MessageBox.Show(
                 this,
-                "Exiting Aetherium Launcher will also close the monitored game client. Exit now?",
+                $"Exiting Aetherium Launcher will also close {clients}. Exit now?",
                 LauncherName,
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
@@ -168,9 +177,9 @@ public partial class Form1 : Form
             }
         }
 
-        foreach (var guard in guards)
+        foreach (var slot in running)
         {
-            guard.Dispose();
+            slot.Guard.Dispose();
         }
     }
 
@@ -282,7 +291,38 @@ public partial class Form1 : Form
         StyleTextInput(passwordTextBox, "Password", true);
         StyleTextInput(hostTextBox, AetheriumInstallationConfiguration.DefaultHost);
         StyleTextInput(zoneKeyTextBox, "Optional -z");
-        serverChoice.SelectionChanged += (_, _) => SaveControlsToConfig();
+        serverChoice.SelectionChanged += (_, _) =>
+        {
+            if (!suppressSlotEvents)
+            {
+                SaveControlsToConfig();
+                RefreshSlotChips();
+            }
+        };
+        usernameTextBox.TextChanged += (_, _) =>
+        {
+            if (suppressSlotEvents)
+            {
+                return;
+            }
+
+            WriteFieldsToSelectedSlot();
+            RefreshSlotChips();
+        };
+        usernameTextBox.Leave += (_, _) =>
+        {
+            if (!suppressSlotEvents)
+            {
+                SaveControlsToConfig();
+            }
+        };
+        passwordTextBox.Leave += (_, _) =>
+        {
+            if (!suppressSlotEvents)
+            {
+                SaveControlsToConfig();
+            }
+        };
 
         useNoDisplayModeCheckBox.Text = "No display mode (-nd)";
         useNoDisplayModeCheckBox.Checked = true;
@@ -323,12 +363,29 @@ public partial class Form1 : Form
         {
             Height = 2,
             Width = 176,
-            Margin = new Padding(0, 0, 0, 12),
+            Margin = new Padding(0, 0, 0, 8),
             BackColor = Color.FromArgb(118, 72, 24),
         };
         layout.Controls.Add(titleRule);
 
+        slotChoice = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Color.Transparent,
+        };
+        slotOneButton = CreateSlotChip("1");
+        slotTwoButton = CreateSlotChip("2");
+        slotChoice.Controls.Add(slotOneButton);
+        slotChoice.Controls.Add(slotTwoButton);
+
         layout.Controls.Add(CreateFieldRow("Install", WrapLedger(installPathTextBox)));
+        layout.Controls.Add(CreateFieldRow("Slot", slotChoice));
+        slotChoice.Dock = DockStyle.Left;
         layout.Controls.Add(CreateFieldRow("Account", WrapLedger(usernameTextBox)));
         layout.Controls.Add(CreateFieldRow("Password", WrapLedger(passwordTextBox)));
         layout.Controls.Add(CreateFieldRow("Host", WrapLedger(hostTextBox)));
@@ -395,6 +452,146 @@ public partial class Form1 : Form
 
         fieldRows.Add(row);
         return row;
+    }
+
+    private ArcaneButton CreateSlotChip(string slotId)
+    {
+        var button = new ArcaneButton
+        {
+            Text = slotId,
+            Width = 148,
+            Height = 28,
+            Margin = new Padding(0, 0, slotId == "1" ? 8 : 0, 0),
+            Palette = ArcaneButton.ButtonPalette.Bone,
+            Font = new Font("Georgia", 9f, FontStyle.Bold, GraphicsUnit.Point),
+        };
+        button.Click += (_, _) => SelectSlot(slotId);
+        return button;
+    }
+
+    private void SelectSlot(string slotId)
+    {
+        if (slotId == selectedSlotId || suppressSlotEvents)
+        {
+            return;
+        }
+
+        WriteFieldsToSelectedSlot();
+        selectedSlotId = slotId;
+        LoadSelectedSlotFields();
+        SaveControlsToConfig();
+        RefreshSlotChips();
+    }
+
+    private AccountSlot SelectedSlot()
+    {
+        return selectedSlotId == "2" ? slotTwo : slotOne;
+    }
+
+    private void WriteFieldsToSelectedSlot()
+    {
+        var slot = SelectedSlot();
+        slot.Account = usernameTextBox.Text.Trim();
+        slot.Password = passwordTextBox.Text.Trim();
+        slot.Port = serverChoice.RedSelected
+            ? AetheriumInstallationConfiguration.RedServerPort
+            : AetheriumInstallationConfiguration.WhiteServerPort;
+    }
+
+    private void LoadSelectedSlotFields()
+    {
+        var slot = SelectedSlot();
+        suppressSlotEvents = true;
+        try
+        {
+            usernameTextBox.Text = slot.Account;
+            passwordTextBox.Text = slot.Password;
+            serverChoice.SetRedSelected(slot.Port == AetheriumInstallationConfiguration.RedServerPort);
+        }
+        finally
+        {
+            suppressSlotEvents = false;
+        }
+
+        RefreshSlotChips();
+    }
+
+    private void CopySlotsFrom(LaunchConfig config)
+    {
+        config.EnsureSlots();
+        CopySlotOnto(slotOne, config.Slots.First(slot => slot.Id == "1"));
+        CopySlotOnto(slotTwo, config.Slots.First(slot => slot.Id == "2"));
+        selectedSlotId = config.SelectedSlotId;
+    }
+
+    private static void CopySlotOnto(AccountSlot target, AccountSlot source)
+    {
+        target.Account = source.Account;
+        target.Password = source.Password;
+        target.Port = source.Port;
+    }
+
+    private static AccountSlot CopySlot(AccountSlot source)
+    {
+        return new AccountSlot
+        {
+            Id = source.Id,
+            Account = source.Account,
+            Password = source.Password,
+            Port = source.Port,
+        };
+    }
+
+    private void RefreshSlotChips()
+    {
+        if (slotOneButton is not null)
+        {
+            slotOneButton.Text = ChipText(slotOne);
+            slotOneButton.Chosen = selectedSlotId == "1";
+            slotToolTip.SetToolTip(slotOneButton, SlotTip(slotOne));
+        }
+
+        if (slotTwoButton is not null)
+        {
+            slotTwoButton.Text = ChipText(slotTwo);
+            slotTwoButton.Chosen = selectedSlotId == "2";
+            slotToolTip.SetToolTip(slotTwoButton, SlotTip(slotTwo));
+        }
+    }
+
+    private string ChipText(AccountSlot slot)
+    {
+        var name = string.IsNullOrWhiteSpace(slot.Account) ? "Empty" : slot.Account.Trim();
+        if (name.Length > 16)
+        {
+            name = name[..15] + "…";
+        }
+
+        return IsSlotRunning(slot.Id) ? $"{slot.Id}  {name}  ·  on" : $"{slot.Id}  {name}";
+    }
+
+    private static string SlotTip(AccountSlot slot)
+    {
+        var name = string.IsNullOrWhiteSpace(slot.Account) ? "No account saved" : slot.Account.Trim();
+        var server = slot.Port == AetheriumInstallationConfiguration.RedServerPort ? "Red" : "White";
+        return $"Slot {slot.Id} · {name} · {server}";
+    }
+
+    private bool IsSlotRunning(string slotId)
+    {
+        lock (runtimeGuardLock)
+        {
+            return runningSlots.TryGetValue(slotId, out var running) && !running.Process.HasExited;
+        }
+    }
+
+    private bool IsAnotherSlotRunning(string slotId)
+    {
+        lock (runtimeGuardLock)
+        {
+            return runningSlots.Any(pair =>
+                pair.Key != slotId && !pair.Value.Process.HasExited);
+        }
     }
 
     private ArcaneButton CreateToolButton(string text, EventHandler clickHandler)
@@ -644,16 +841,35 @@ public partial class Form1 : Form
         titleLabel.Margin = ScalePadding(new Padding(0, 0, 0, 4), scale);
         titleRule.Width = ScaleInt(168, scale);
         titleRule.Height = Math.Max(1, ScaleInt(2, scale));
-        titleRule.Margin = ScalePadding(new Padding(0, 0, 0, 10), scale);
+        titleRule.Margin = ScalePadding(new Padding(0, 0, 0, compact ? 4 : 8), scale);
+        var labelColumn = compact
+            ? Math.Max(64, ScaleInt((int)FieldLabelColumnWidth, scale))
+            : Math.Max(FieldLabelColumnMinWidth, ScaleInt((int)FieldLabelColumnWidth, scale));
+        var slotWidth = Math.Max(compact ? 72 : 120, ScaleInt(compact ? 96 : 148, scale));
+        var slotHeight = Math.Max(compact ? 20 : 24, ScaleInt(28, scale));
+        var slotFont = CreateScaledFont("Georgia", 9f, FontStyle.Bold, scale, compact ? 7f : 8f);
+        if (slotOneButton is not null)
+        {
+            slotOneButton.Width = slotWidth;
+            slotOneButton.Height = slotHeight;
+            slotOneButton.Margin = ScalePadding(new Padding(0, 0, compact ? 4 : 8, 0), scale);
+            slotOneButton.Font = slotFont;
+        }
+
+        if (slotTwoButton is not null)
+        {
+            slotTwoButton.Width = slotWidth;
+            slotTwoButton.Height = slotHeight;
+            slotTwoButton.Margin = Padding.Empty;
+            slotTwoButton.Font = CreateScaledFont("Georgia", 9f, FontStyle.Bold, scale, compact ? 7f : 8f);
+        }
 
         foreach (var row in fieldRows)
         {
-            row.Margin = ScalePadding(new Padding(0, 5, 0, 0), scale);
+            row.Margin = ScalePadding(new Padding(0, compact ? 2 : 3, 0, 0), scale);
             if (row.ColumnStyles.Count > 0)
             {
-                row.ColumnStyles[0].Width = compact
-                    ? Math.Max(64, ScaleInt((int)FieldLabelColumnWidth, scale))
-                    : Math.Max(FieldLabelColumnMinWidth, ScaleInt((int)FieldLabelColumnWidth, scale));
+                row.ColumnStyles[0].Width = labelColumn;
             }
         }
 
@@ -921,6 +1137,7 @@ public partial class Form1 : Form
             "Room lets you browse the client folder or exit.\n" +
             "Zone and the purple PLAY button both launch client.exe with the parchment settings.\n" +
             "The client always launches from your install folder so DAT updates stay in one place.\n" +
+            "Two account slots keep separate logins, Red/White, and game settings.\n" +
             "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
             "A09 checks active program identity locally and verifies its own client hooks while the game runs.\n" +
             "It resolves active executable paths only for version identity; paths stay local and are not logged.\n" +
@@ -997,6 +1214,15 @@ public partial class Form1 : Form
                 return;
             }
 
+            if (IsSlotRunning(selectedSlotId))
+            {
+                MessageBox.Show(
+                    this,
+                    $"Slot {selectedSlotId} is already in game. Pick the other account to open a second client.",
+                    LauncherName);
+                return;
+            }
+
             var config = ReadFormConfig();
             if (startupInstallDirectory is not null)
             {
@@ -1028,8 +1254,15 @@ public partial class Form1 : Form
 
         lock (runtimeGuardLock)
         {
-            runtimeGuards.Add(guard);
+            runningSlots[result.SlotId] = new RunningSlot
+            {
+                SlotId = result.SlotId,
+                Guard = guard,
+                Process = process,
+            };
         }
+
+        RefreshSlotChips();
 
         var cleanupStarted = 0;
         void CleanupRuntimeGuard()
@@ -1042,7 +1275,23 @@ public partial class Form1 : Form
             guard.Dispose();
             lock (runtimeGuardLock)
             {
-                runtimeGuards.Remove(guard);
+                if (runningSlots.TryGetValue(result.SlotId, out var running) &&
+                    ReferenceEquals(running.Guard, guard))
+                {
+                    runningSlots.Remove(result.SlotId);
+                }
+            }
+
+            if (!IsDisposed)
+            {
+                try
+                {
+                    BeginInvoke(RefreshSlotChips);
+                }
+                catch (InvalidOperationException)
+                {
+                    // The launcher is already closing.
+                }
             }
         }
 
@@ -1064,20 +1313,27 @@ public partial class Form1 : Form
 
     private LaunchConfig ReadFormConfig()
     {
+        WriteFieldsToSelectedSlot();
+        var selected = SelectedSlot();
         return new LaunchConfig
         {
             InstallPath = startupInstallDirectory ?? installPathTextBox.Text.Trim(),
-            TicketKey = usernameTextBox.Text.Trim(),
+            TicketKey = selected.Account.Trim(),
             Host = hostTextBox.Text.Trim(),
-            Port = serverChoice.RedSelected
-                ? AetheriumInstallationConfiguration.RedServerPort
-                : AetheriumInstallationConfiguration.WhiteServerPort,
-            VArg = passwordTextBox.Text.Trim(),
+            Port = selected.Port,
+            VArg = selected.Password,
             ZArg = zoneKeyTextBox.Text.Trim(),
             UseNoDisplayMode = useNoDisplayModeCheckBox.Checked,
             SeedSafeGraphics = seedSafeGraphicsCheckBox.Checked,
             Skin = currentSkin,
+            Slots =
+            [
+                CopySlot(slotOne),
+                CopySlot(slotTwo),
+            ],
+            SelectedSlotId = selectedSlotId,
             PreserveLegacyMulticlient = startupInstallDirectory is not null,
+            AnotherClientRunning = IsAnotherSlotRunning(selectedSlotId),
         };
     }
 
@@ -1142,10 +1398,9 @@ public partial class Form1 : Form
         var (config, configLoadedFromDisk) = LoadConfig();
 
         installPathTextBox.Text = config.InstallPath;
-        usernameTextBox.Text = config.TicketKey;
         hostTextBox.Text = config.Host;
-        serverChoice.SetRedSelected(config.Port == AetheriumInstallationConfiguration.RedServerPort);
-        passwordTextBox.Text = config.VArg;
+        CopySlotsFrom(config);
+        LoadSelectedSlotFields();
         zoneKeyTextBox.Text = config.ZArg;
         useNoDisplayModeCheckBox.Checked = config.UseNoDisplayMode;
         seedSafeGraphicsCheckBox.Checked = config.SeedSafeGraphics;
@@ -1185,6 +1440,8 @@ public partial class Form1 : Form
 
         hostTextBox.Text = dataCenter.ServerAddress;
         serverChoice.SetRedSelected(dataCenter.ServerPort == AetheriumInstallationConfiguration.RedServerPort);
+        WriteFieldsToSelectedSlot();
+        RefreshSlotChips();
     }
 
     private void SaveControlsToConfig()
@@ -1916,6 +2173,15 @@ public partial class Form1 : Form
                 ForeColor,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
         }
+    }
+
+    private sealed class RunningSlot
+    {
+        public required string SlotId { get; init; }
+
+        public required ClientAntiTamperRuntimeGuard Guard { get; init; }
+
+        public required Process Process { get; init; }
     }
 
     private sealed class ServerChoiceBar : FlowLayoutPanel

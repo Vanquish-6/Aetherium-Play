@@ -1,11 +1,15 @@
+using System.Collections;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace AcLegacyLauncher;
 
 internal static class NativeProcess
 {
     public const uint CreateSuspended = 0x00000004;
+
+    public const uint CreateUnicodeEnvironment = 0x00000400;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct StartupInfo
@@ -66,21 +70,44 @@ internal static class NativeProcess
         string workingDirectory,
         string arguments,
         out IntPtr processHandle,
-        out IntPtr threadHandle)
+        out IntPtr threadHandle,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var commandLine = $"\"{clientPath}\" {arguments}".TrimEnd();
         var startupInfo = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
-        if (!CreateProcessW(
+        var environmentBlock = IntPtr.Zero;
+        var flags = CreateSuspended;
+        if (environment is not null)
+        {
+            environmentBlock = CreateEnvironmentBlock(environment);
+            flags |= CreateUnicodeEnvironment;
+        }
+
+        bool created;
+        ProcessInformation processInfo = default;
+        try
+        {
+            created = CreateProcessW(
                 clientPath,
                 commandLine,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                CreateSuspended,
-                IntPtr.Zero,
+                flags,
+                environmentBlock,
                 workingDirectory,
                 ref startupInfo,
-                out var processInfo))
+                out processInfo);
+        }
+        finally
+        {
+            if (environmentBlock != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(environmentBlock);
+            }
+        }
+
+        if (!created)
         {
             throw new InvalidOperationException(
                 $"CreateProcess failed for client.exe (Win32 {Marshal.GetLastWin32Error()}).");
@@ -108,6 +135,35 @@ internal static class NativeProcess
             CloseHandle(processHandle);
             throw;
         }
+    }
+
+    private static IntPtr CreateEnvironmentBlock(IReadOnlyDictionary<string, string> overrides)
+    {
+        var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && entry.Value is string value)
+            {
+                variables[key] = value;
+            }
+        }
+
+        foreach (var pair in overrides)
+        {
+            variables[pair.Key] = pair.Value;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var pair in variables)
+        {
+            builder.Append(pair.Key);
+            builder.Append('=');
+            builder.Append(pair.Value);
+            builder.Append('\0');
+        }
+
+        builder.Append('\0');
+        return Marshal.StringToHGlobalUni(builder.ToString());
     }
 
     public static void ResumeAndClose(ref IntPtr processHandle, ref IntPtr threadHandle)

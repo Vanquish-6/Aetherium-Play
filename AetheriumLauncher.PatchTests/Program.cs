@@ -149,6 +149,195 @@ static void StopProcess(Process process)
     }
 }
 
+static void ProveAccountSlots()
+{
+    var migrated = new LaunchConfig
+    {
+        TicketKey = "LegacyAccount",
+        VArg = "secret",
+        Port = AetheriumInstallationConfiguration.RedServerPort,
+    };
+    migrated.EnsureSlots();
+    Equal("LegacyAccount", migrated.Slots[0].Account, "legacy account migrates to slot 1");
+    Equal("secret", migrated.Slots[0].Password, "legacy password migrates to slot 1");
+    Equal(AetheriumInstallationConfiguration.RedServerPort, migrated.Slots[0].Port, "legacy server migrates to slot 1");
+    Equal(string.Empty, migrated.Slots[1].Account, "slot 2 starts empty");
+    migrated.Slots[0].Account = "Kept";
+    migrated.TicketKey = "Ignored";
+    migrated.EnsureSlots();
+    Equal("Kept", migrated.SelectedSlot.Account, "existing slot is not replaced by the legacy field");
+
+    var fromJson = JsonSerializer.Deserialize<LaunchConfig>("""
+        { "TicketKey": "JsonAccount", "VArg": "pw", "Port": 9100 }
+        """) ?? throw new InvalidOperationException("launcher json did not deserialize");
+    fromJson.EnsureSlots();
+    Equal("JsonAccount", fromJson.Slots.Single(slot => slot.Id == "1").Account, "json without slots migrates");
+
+    var launch = new LaunchConfig();
+    launch.EnsureSlots();
+    launch.SelectedSlotId = "2";
+    launch.Slots[1].Account = "Second";
+    launch.Slots[1].Password = "other";
+    launch.Slots[1].Port = AetheriumInstallationConfiguration.RedServerPort;
+    launch.SyncSelectedSlotToLaunchFields();
+    var parts = ClientLauncher.BuildArgumentParts(launch);
+    True(parts.Contains("Second"), "slot 2 account is launched");
+    True(parts.Contains("9100"), "slot 2 red port is launched");
+    Equal("Second", launch.TicketKey, "selected slot is mirrored to the legacy account field");
+
+    var root = Path.Combine(Path.GetTempPath(), "aetherium-slots-" + Guid.NewGuid().ToString("N"));
+    var retail = Path.Combine(root, "retail");
+    var retailPreferences = Path.Combine(retail, "Asheron's Call");
+    Directory.CreateDirectory(retailPreferences);
+    var retailIni = Path.Combine(retailPreferences, "UserPreferences.ini");
+    File.WriteAllText(retailIni, "retail-marker");
+    var install = Path.Combine(root, "install");
+    var maps = Path.Combine(install, "game", "ui", "inputmaps");
+    Directory.CreateDirectory(maps);
+    File.WriteAllText(Path.Combine(maps, "keys.txt"), "keymap-marker");
+    var slotRoot = Path.Combine(root, "slot");
+    var registryRoot = @"Software\AetheriumPlay\slot-tests\" + Guid.NewGuid().ToString("N");
+    try
+    {
+        var environment = ClientSlotStore.Prepare("1", install, safeGraphics: false, new SlotStorePaths
+        {
+            SlotRoot = slotRoot,
+            RetailDocuments = retail,
+            SkipRegistry = true,
+        });
+        var slotIni = Path.Combine(environment.SlotDocuments, "Asheron's Call", "UserPreferences.ini");
+        Equal("retail-marker", File.ReadAllText(slotIni), "empty slot copies retail preferences once");
+        Equal(
+            "keymap-marker",
+            File.ReadAllText(Path.Combine(environment.SlotMaps, "keys.txt")),
+            "empty slot copies input maps once");
+        File.WriteAllText(retailIni, "changed-retail");
+        ClientSlotStore.Prepare("1", install, false, new SlotStorePaths
+        {
+            SlotRoot = slotRoot,
+            RetailDocuments = retail,
+            SkipRegistry = true,
+        });
+        Equal("retail-marker", File.ReadAllText(slotIni), "later launch does not recopy retail preferences");
+        Equal("changed-retail", File.ReadAllText(retailIni), "retail preferences stay untouched");
+
+        var emptyRetail = Path.Combine(root, "missing-retail");
+        var emptySlot = Path.Combine(root, "empty-slot");
+        var seeded = ClientSlotStore.Prepare("2", install, false, new SlotStorePaths
+        {
+            SlotRoot = emptySlot,
+            RetailDocuments = emptyRetail,
+            SkipRegistry = true,
+        });
+        True(
+            File.Exists(Path.Combine(seeded.SlotDocuments, "Asheron's Call", "UserPreferences.ini")),
+            "missing retail prefs are seeded only in the slot");
+        True(!Directory.Exists(emptyRetail), "missing retail documents folder is not created");
+
+        using (var rootKey = Registry.CurrentUser.CreateSubKey(registryRoot))
+        using (var machine = rootKey.CreateSubKey("machine"))
+        using (var slotKey = rootKey.CreateSubKey("slot"))
+        {
+            machine.SetValue("ScreenWidth", 1024, RegistryValueKind.DWord);
+            machine.SetValue("DirectDrawDevice", "stale", RegistryValueKind.String);
+            machine.SetValue("FullScreen", 0, RegistryValueKind.DWord);
+            ClientSlotStore.SeedGraphicsKey(slotKey, machine, safeDefaults: false);
+            Equal(1024, (int)slotKey.GetValue("ScreenWidth")!, "slot graphics copy resolution once");
+            Equal("stale", (string)machine.GetValue("DirectDrawDevice")!, "machine graphics key is not rewritten");
+            True(slotKey.GetValue("DirectDrawDevice") is null, "stale device is cleared only on the slot key");
+            Equal(1, (int)slotKey.GetValue("FullScreen")!, "slot graphics are repaired");
+            Equal(0, (int)machine.GetValue("FullScreen")!, "retail fullscreen value stays put");
+            machine.SetValue("ScreenWidth", 640, RegistryValueKind.DWord);
+            ClientSlotStore.SeedGraphicsKey(slotKey, machine, safeDefaults: false);
+            Equal(1024, (int)slotKey.GetValue("ScreenWidth")!, "later launch does not recopy machine graphics");
+        }
+
+        var rewritten = new byte[512];
+        var rewrite = RewriteSlotPath(
+            @"C:\Users\a\Documents\Asheron's Call\UserPreferences.ini",
+            @"C:\Users\a\Documents",
+            @"D:\slot\Documents",
+            @"D:\slot\game\ui\inputmaps",
+            rewritten);
+        Equal(1, rewrite, "documents path is rewritten");
+        Equal(
+            @"D:\slot\Documents\Asheron's Call\UserPreferences.ini",
+            Encoding.ASCII.GetString(rewritten).TrimEnd('\0'),
+            "documents rewrite target");
+
+        Array.Clear(rewritten);
+        rewrite = RewriteSlotPath(
+            @"C:\asheronscalldm\game\ui\inputmaps\keys.txt",
+            @"C:\Users\a\Documents",
+            @"D:\slot\Documents",
+            @"D:\slot\game\ui\inputmaps",
+            rewritten);
+        Equal(1, rewrite, "input map path is rewritten");
+        Equal(
+            @"D:\slot\game\ui\inputmaps\keys.txt",
+            Encoding.ASCII.GetString(rewritten).TrimEnd('\0'),
+            "input map rewrite target");
+
+        Array.Clear(rewritten);
+        rewrite = RewriteSlotPath(
+            @"C:\asheronscalldm\portal.dat",
+            @"C:\Users\a\Documents",
+            @"D:\slot\Documents",
+            @"D:\slot\game\ui\inputmaps",
+            rewritten);
+        Equal(0, rewrite, "game dat path stays shared");
+        Equal(
+            @"C:\asheronscalldm\portal.dat",
+            Encoding.ASCII.GetString(rewritten).TrimEnd('\0'),
+            "portal.dat rewrite is a no-op");
+
+        Array.Clear(rewritten);
+        rewrite = RewriteSlotPath(
+            @"C:\Users\a\DocumentsBackup\notes.txt",
+            @"C:\Users\a\Documents",
+            @"D:\slot\Documents",
+            @"D:\slot\game\ui\inputmaps",
+            rewritten);
+        Equal(0, rewrite, "a longer folder name is not treated as documents");
+    }
+    finally
+    {
+        try
+        {
+            Registry.CurrentUser.DeleteSubKeyTree(registryRoot, throwOnMissingSubKey: false);
+        }
+        catch (ArgumentException)
+        {
+            // The graphics seed did not create the key.
+        }
+
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+}
+
+[DllImport("SlotIsolation.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+static extern int SlotIsolation_RewriteA(
+    string path,
+    string retailDocs,
+    string slotDocs,
+    string slotMaps,
+    byte[] output,
+    int outputChars);
+
+static int RewriteSlotPath(
+    string path,
+    string retailDocs,
+    string slotDocs,
+    string slotMaps,
+    byte[] output)
+{
+    Array.Clear(output);
+    return SlotIsolation_RewriteA(path, retailDocs, slotDocs, slotMaps, output, output.Length);
+}
+
 static void Equal<T>(T expected, T actual, string label)
     where T : notnull
 {
@@ -1372,6 +1561,7 @@ try
     True(
         ClientLauncher.ShouldRemoveLegacyMulticlient(new LaunchConfig()),
         "ordinary launch retains legacy multiclient migration");
+    ProveAccountSlots();
 
     foreach (var disallowedPath in new[]
              {
