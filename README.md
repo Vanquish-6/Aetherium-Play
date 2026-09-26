@@ -81,6 +81,9 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
+- Version 1.0.38 clears the 1.0.36 display lock out of an existing
+  `DgVoodoo.conf`. Fake fullscreen and the disabled Alt+Enter key are removed
+  on the next Play, so resolution is no longer stuck at 800x600.
 - Version 1.0.37 undoes the 1.0.36 display lock. That build forced a
   desktop fullscreen window and disabled Alt+Enter, which stuck players at
   800x600. Resolution and Alt+Enter are left to the player.

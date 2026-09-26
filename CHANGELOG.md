@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.38 - 2026-09-25
+
+### Fixed
+
+- Players who ran 1.0.36 still had fake fullscreen and Alt+Enter turned off,
+  which kept the game at 800x600. The next Play puts those dgVoodoo lines back
+  to the way they were before that build. Resolution and Alt+Enter work again.
+
 ## 1.0.37 - 2026-09-25
 
 ### Fixed

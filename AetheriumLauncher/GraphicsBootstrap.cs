@@ -390,6 +390,101 @@ internal static class GraphicsBootstrap
             disableAltEnterToToggleScreenMode: null);
     }
 
+    /// <summary>
+    /// 1.0.36 wrote fake fullscreen and turned Alt+Enter off. That kept the
+    /// game at 800x600. Put those lines back when that value is still present.
+    /// </summary>
+    internal static void RestoreDisplayModeBefore136(string workingDirectory)
+    {
+        var configPath = ResolveDgVoodooConfigPath(workingDirectory);
+        if (configPath is null)
+        {
+            return;
+        }
+
+        var lines = File.ReadAllLines(configPath);
+        if (!lines.Any(IsForcedFakeFullscreenLine))
+        {
+            return;
+        }
+
+        var changed = false;
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var line = lines[index];
+            string? updated = null;
+            if (IsConfigKey(line, "FullscreenAttributes"))
+            {
+                updated = SetConfigValue(line, "FullscreenAttributes", string.Empty);
+            }
+            else if (IsConfigKey(line, "DisableAltEnterToToggleScreenMode"))
+            {
+                updated = SetConfigFlag(line, "DisableAltEnterToToggleScreenMode", false);
+            }
+            else if (IsConfigKey(line, "DisableScreenSaver"))
+            {
+                updated = SetConfigFlag(line, "DisableScreenSaver", false);
+            }
+            else if (IsConfigKey(line, "FreeMouse"))
+            {
+                updated = SetConfigFlag(line, "FreeMouse", false);
+            }
+
+            if (updated is null || updated == line)
+            {
+                continue;
+            }
+
+            lines[index] = updated;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            File.WriteAllLines(configPath, lines);
+        }
+    }
+
+    private static string? ResolveDgVoodooConfigPath(string workingDirectory)
+    {
+        var configPath = Path.Combine(workingDirectory, "DgVoodoo.conf");
+        if (!File.Exists(configPath))
+        {
+            configPath = Path.Combine(workingDirectory, "dgVoodoo.conf");
+        }
+
+        return File.Exists(configPath) ? configPath : null;
+    }
+
+    private static bool IsConfigKey(string line, string key)
+    {
+        var trimmed = line.TrimStart();
+        if (trimmed.StartsWith(';'))
+        {
+            return false;
+        }
+
+        var equalsIndex = trimmed.IndexOf('=');
+        if (equalsIndex < 0)
+        {
+            return false;
+        }
+
+        return trimmed[..equalsIndex].Trim().Equals(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsForcedFakeFullscreenLine(string line)
+    {
+        if (!IsConfigKey(line, "FullscreenAttributes"))
+        {
+            return false;
+        }
+
+        var equalsIndex = line.IndexOf('=');
+        return equalsIndex >= 0 &&
+               line[(equalsIndex + 1)..].Trim().Equals("fake", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void ApplyDgVoodooFlags(
         string workingDirectory,
         bool? captureMouse,
@@ -399,13 +494,8 @@ internal static class GraphicsBootstrap
         bool? appControlledScreenMode,
         bool? disableAltEnterToToggleScreenMode)
     {
-        var configPath = Path.Combine(workingDirectory, "DgVoodoo.conf");
-        if (!File.Exists(configPath))
-        {
-            configPath = Path.Combine(workingDirectory, "dgVoodoo.conf");
-        }
-
-        if (!File.Exists(configPath))
+        var configPath = ResolveDgVoodooConfigPath(workingDirectory);
+        if (configPath is null)
         {
             return;
         }
@@ -628,5 +718,22 @@ internal static class GraphicsBootstrap
         }
 
         return padding + (value ? "true" : "false");
+    }
+
+    private static string SetConfigValue(string line, string key, string value)
+    {
+        var equalsIndex = line.IndexOf('=');
+        if (equalsIndex < 0 || !IsConfigKey(line, key))
+        {
+            return line;
+        }
+
+        var padding = line[..(equalsIndex + 1)] + " ";
+        while (padding.Length < 36)
+        {
+            padding += " ";
+        }
+
+        return padding + value;
     }
 }

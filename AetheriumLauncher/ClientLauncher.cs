@@ -63,6 +63,7 @@ public static class ClientLauncher
                 installDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
 
+            GraphicsBootstrap.RestoreDisplayModeBefore136(workingDirectory);
             if (config.AnotherClientRunning)
             {
                 GraphicsBootstrap.ApplySecondClientMouseSettings(workingDirectory);
