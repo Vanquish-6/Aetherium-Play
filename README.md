@@ -81,9 +81,9 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
-- Version 1.0.36 keeps fullscreen on the desktop. Exclusive fullscreen and
-  Alt+Enter could blank the screen and drop monitor audio, especially with
-  two clients left open. Monitor sleep stays off while the game is running.
+- Version 1.0.37 undoes the 1.0.36 display lock. That build forced a
+  desktop fullscreen window and disabled Alt+Enter, which stuck players at
+  800x600. Resolution and Alt+Enter are left to the player.
 - Version 1.0.35 adds two account slots. Each keeps its own login, Red or
   White choice, and settings. Both still launch from the install folder.
   Retail Documents and the machine graphics key are not rewritten, and the
