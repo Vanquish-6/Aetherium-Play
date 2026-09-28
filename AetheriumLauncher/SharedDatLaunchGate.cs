@@ -214,8 +214,7 @@ internal static class SharedDatLaunchGate
         SharedDatLaunchLease lease,
         Process process,
         NativeClientDddAccelerationInstallation installation,
-        Action<string>? report,
-        Action? onDatSafe = null)
+        Action<string>? report)
     {
         ArgumentNullException.ThrowIfNull(lease);
         ArgumentNullException.ThrowIfNull(process);
@@ -271,18 +270,20 @@ internal static class SharedDatLaunchGate
                         case NativeDatDrainState.Busy:
                             break;
 
-                        case NativeDatDrainState.ReadyForPromotion:
-                            // The A09 hook deliberately keeps OpeningUI
-                            // incomplete and freezes CLCache consumption while
-                            // the launcher promotes this slot's fully-drained DAT
-                            // pair back to the install seed.
-                            onDatSafe?.Invoke();
+                        case NativeDatDrainState.DrainedAfterBusy:
                             report?.Invoke(
-                                "Private DAT update promoted to the shared seed; " +
-                                "another account slot may now launch.");
+                                "Shared DAT update fully drained; another account slot may now launch.");
                             return;
 
-                        case NativeDatDrainState.PromotionComplete:
+                        case NativeDatDrainState.IdleObserved:
+                            // Get_Download_Status only returns complete at this
+                            // point after CLCache is complete, its inbound queue
+                            // is empty, and both DAT writers report zero pending
+                            // writes. No update-needed logins therefore hand off
+                            // here without fabricating a busy transition.
+                            report?.Invoke(
+                                "Login DAT check completed with no pending writes; " +
+                                "another account slot may now launch.");
                             return;
 
                         default:

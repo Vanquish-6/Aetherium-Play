@@ -212,8 +212,8 @@ internal enum NativeDatDrainState
 {
     Unknown = 0,
     Busy = 1,
-    ReadyForPromotion = 2,
-    PromotionComplete = 3,
+    DrainedAfterBusy = 2,
+    IdleObserved = 3,
 }
 
 /// <summary>
@@ -1145,22 +1145,10 @@ internal static class NativeClientDddAcceleration
         return raw switch
         {
             (int)NativeDatDrainState.Busy => NativeDatDrainState.Busy,
-            (int)NativeDatDrainState.ReadyForPromotion => NativeDatDrainState.ReadyForPromotion,
-            (int)NativeDatDrainState.PromotionComplete => NativeDatDrainState.PromotionComplete,
+            (int)NativeDatDrainState.DrainedAfterBusy => NativeDatDrainState.DrainedAfterBusy,
+            (int)NativeDatDrainState.IdleObserved => NativeDatDrainState.IdleObserved,
             _ => NativeDatDrainState.Unknown,
         };
-    }
-
-    internal static void MarkDatPromotionComplete(
-        IntPtr processHandle,
-        NativeClientDddAccelerationInstallation installation)
-    {
-        ArgumentNullException.ThrowIfNull(installation);
-        WriteExact(
-            processHandle,
-            installation.DatDrainStateAddress,
-            BitConverter.GetBytes((int)NativeDatDrainState.PromotionComplete),
-            "DAT promotion completion state");
     }
 
     internal sealed class RemotePatchRegion
@@ -1214,7 +1202,6 @@ internal static class NativeClientDddAcceleration
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             trampolineAddress,
-            datDrainStateAddress,
             out _);
         if (wrapper.Length > UseTimeTrampolineOffset)
         {
@@ -1891,9 +1878,6 @@ internal static class NativeClientDddAcceleration
         }
 
         code.Emit(0x33, 0xC0);                                // xor eax, eax
-        EmitStatePointer();
-        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.PromotionComplete);
-        code.JumpIf(0x84, "success");                         // launcher promoted the seed
         code.Emit(0x83, 0x79, 0x18, 0x03);                    // cmp dword ptr [ecx+18h], 3
         code.JumpIf(0x85, "busy");                            // jne busy
         code.Emit(0x8B, 0x51, 0x04);                          // mov edx, [ecx+4] (queue header)
@@ -1916,10 +1900,19 @@ internal static class NativeClientDddAcceleration
 
         code.Mark("ready_state");
         EmitStatePointer();
+        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.Busy);// cmp dword ptr [edx], 1
+        code.JumpIf(0x84, "drained_after_busy");              // je drained_after_busy
+        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.DrainedAfterBusy);
+        code.JumpIf(0x84, "success");                         // preserve completed state
         code.Emit(
             0xC7, 0x02,
-            (byte)NativeDatDrainState.ReadyForPromotion, 0, 0, 0);
-        code.Emit(0xC2, 0x10, 0x00);                          // keep patch UI incomplete
+            (byte)NativeDatDrainState.IdleObserved, 0, 0, 0); // mov dword ptr [edx], 3
+        code.Jump("success");
+
+        code.Mark("drained_after_busy");
+        code.Emit(
+            0xC7, 0x02,
+            (byte)NativeDatDrainState.DrainedAfterBusy, 0, 0, 0);
 
         code.Mark("success");
         code.Emit(0x40);                                      // inc eax
@@ -1938,27 +1931,13 @@ internal static class NativeClientDddAcceleration
     private static byte[] BuildUseTimeWrapper(
         IntPtr wrapperAddress,
         IntPtr trampolineAddress,
-        IntPtr datDrainStateAddress,
         out int originalCallOffset)
     {
-        var rawStateAddress = datDrainStateAddress.ToInt64();
-        if (rawStateAddress is <= 0 or > uint.MaxValue)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(datDrainStateAddress),
-                "DAT drain state must be an x86 user-mode address.");
-        }
-
-        var stateAddress = BitConverter.GetBytes(unchecked((uint)rawStateAddress));
         var code = new X86CodeBuilder();
         code.Emit(0x53);                                      // push ebx
         code.Emit(0x56);                                      // push esi
         code.Emit(0x57);                                      // push edi
         code.Emit(0x8B, 0xF1);                                // mov esi, ecx
-        code.Emit(0xBF);                                      // mov edi, imm32
-        code.Emit(stateAddress);
-        code.Emit(0x83, 0x3F, (byte)NativeDatDrainState.ReadyForPromotion);
-        code.JumpIf(0x84, "done");                            // freeze CLCache while seed copies
         code.Emit(0xBB, (byte)MaxMessagesPerFrame, 0, 0, 0);  // mov ebx, 8
 
         code.Mark("check_inbound");
@@ -2173,7 +2152,6 @@ internal static class NativeClientDddAcceleration
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
-            Add(remoteCodeAddress, 0x10_000),
             out _);
         return wrapper.Length;
     }
@@ -2183,7 +2161,6 @@ internal static class NativeClientDddAcceleration
         _ = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
-            Add(remoteCodeAddress, 0x10_000),
             out var callOffset);
         return callOffset;
     }
