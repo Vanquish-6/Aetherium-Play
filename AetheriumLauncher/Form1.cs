@@ -90,6 +90,8 @@ public partial class Form1 : Form
     private readonly List<ArcaneButton> toolButtons = new();
     private readonly object runtimeGuardLock = new();
     private readonly Dictionary<string, RunningSlot> runningSlots = new();
+    private readonly HashSet<string> pendingSlots = new(StringComparer.Ordinal);
+    private readonly CancellationTokenSource launchCancellation = new();
     private readonly AccountSlot slotOne = new() { Id = "1" };
     private readonly AccountSlot slotTwo = new() { Id = "2" };
     private readonly string? startupInstallDirectory;
@@ -176,6 +178,8 @@ public partial class Form1 : Form
                 return;
             }
         }
+
+        launchCancellation.Cancel();
 
         foreach (var slot in running)
         {
@@ -548,14 +552,18 @@ public partial class Form1 : Form
         {
             slotOneButton.Text = ChipText(slotOne);
             slotOneButton.Chosen = selectedSlotId == "1";
-            slotToolTip.SetToolTip(slotOneButton, SlotTip(slotOne));
+            slotToolTip.SetToolTip(
+                slotOneButton,
+                SlotTip(slotOne, IsSlotPending(slotOne.Id)));
         }
 
         if (slotTwoButton is not null)
         {
             slotTwoButton.Text = ChipText(slotTwo);
             slotTwoButton.Chosen = selectedSlotId == "2";
-            slotToolTip.SetToolTip(slotTwoButton, SlotTip(slotTwo));
+            slotToolTip.SetToolTip(
+                slotTwoButton,
+                SlotTip(slotTwo, IsSlotPending(slotTwo.Id)));
         }
     }
 
@@ -567,14 +575,24 @@ public partial class Form1 : Form
             name = name[..15] + "…";
         }
 
-        return IsSlotRunning(slot.Id) ? $"{slot.Id}  {name}  ·  on" : $"{slot.Id}  {name}";
+        if (IsSlotRunning(slot.Id))
+        {
+            return $"{slot.Id}  {name}  ·  on";
+        }
+
+        return IsSlotPending(slot.Id)
+            ? $"{slot.Id}  {name}  ·  waiting"
+            : $"{slot.Id}  {name}";
     }
 
-    private static string SlotTip(AccountSlot slot)
+    private static string SlotTip(AccountSlot slot, bool waitingForSharedDat)
     {
         var name = string.IsNullOrWhiteSpace(slot.Account) ? "No account saved" : slot.Account.Trim();
         var server = slot.Port == AetheriumInstallationConfiguration.RedServerPort ? "Red" : "White";
-        return $"Slot {slot.Id} · {name} · {server}";
+        var detail = $"Slot {slot.Id} · {name} · {server}";
+        return waitingForSharedDat
+            ? detail + Environment.NewLine + "Waiting for shared game data update…"
+            : detail;
     }
 
     private bool IsSlotRunning(string slotId)
@@ -582,6 +600,14 @@ public partial class Form1 : Form
         lock (runtimeGuardLock)
         {
             return runningSlots.TryGetValue(slotId, out var running) && !running.Process.HasExited;
+        }
+    }
+
+    private bool IsSlotPending(string slotId)
+    {
+        lock (runtimeGuardLock)
+        {
+            return pendingSlots.Contains(slotId);
         }
     }
 
@@ -1204,8 +1230,9 @@ public partial class Form1 : Form
         e.SuppressKeyPress = true;
     }
 
-    private void LaunchButton_Click(object? sender, EventArgs e)
+    private async void LaunchButton_Click(object? sender, EventArgs e)
     {
+        var requestedSlotId = selectedSlotId;
         try
         {
             if (string.IsNullOrWhiteSpace(usernameTextBox.Text))
@@ -1214,14 +1241,23 @@ public partial class Form1 : Form
                 return;
             }
 
-            if (IsSlotRunning(selectedSlotId))
+            if (IsSlotRunning(requestedSlotId))
             {
                 MessageBox.Show(
                     this,
-                    $"Slot {selectedSlotId} is already in game. Pick the other account to open a second client.",
+                    $"Slot {requestedSlotId} is already in game. Pick the other account to open a second client.",
                     LauncherName);
                 return;
             }
+
+            lock (runtimeGuardLock)
+            {
+                if (!pendingSlots.Add(requestedSlotId))
+                {
+                    return;
+                }
+            }
+            RefreshSlotChips();
 
             var config = ReadFormConfig();
             if (startupInstallDirectory is not null)
@@ -1232,14 +1268,38 @@ public partial class Form1 : Form
 
             ClientLauncher.ValidateForLaunch(config);
             SaveControlsToConfig();
-            var result = ClientLauncher.Start(
-                config,
-                ClientLauncher.GetRepositoryToolsDirectory());
+
+            var result = await Task.Run(
+                () => ClientLauncher.Start(
+                    config,
+                    ClientLauncher.GetRepositoryToolsDirectory(),
+                    cancellationToken: launchCancellation.Token),
+                launchCancellation.Token);
             TrackRuntimeGuard(result);
+        }
+        catch (OperationCanceledException) when (launchCancellation.IsCancellationRequested)
+        {
+            // Launcher shutdown cancels queued second-client launches before
+            // they can acquire the shared-DAT lease and create client.exe.
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, LauncherName);
+            if (!IsDisposed)
+            {
+                MessageBox.Show(this, ex.Message, LauncherName);
+            }
+        }
+        finally
+        {
+            lock (runtimeGuardLock)
+            {
+                pendingSlots.Remove(requestedSlotId);
+            }
+
+            if (!IsDisposed)
+            {
+                RefreshSlotChips();
+            }
         }
     }
 

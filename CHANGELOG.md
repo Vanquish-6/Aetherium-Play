@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.39 - 2026-09-28
+
+### Fixed
+
+- Two account slots can no longer enter the shared `portal.dat` / `cell.dat`
+  login update at the same time. The first client owns a machine-wide named mutex
+  keyed to the normalized AC install path until the A09 hook proves CLCache is
+  complete and both native DAT writers have drained. The second slot stays queued
+  and only starts afterward, so it reads the already-updated revision instead of
+  requesting the same repair concurrently.
+- The shared-DAT gate fails closed. Separate AC installs use independent mutexes,
+  and a killed launcher leaves an abandoned owner rather than a false completion;
+  the next queued launch becomes the updater and re-enters normal revision
+  checking/idempotent repair.
+
 ## 1.0.38 - 2026-09-25
 
 ### Fixed

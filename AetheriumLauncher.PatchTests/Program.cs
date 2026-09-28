@@ -318,6 +318,128 @@ static void ProveAccountSlots()
     }
 }
 
+static void ProveSharedDatLaunchGate()
+{
+    var root = Path.Combine(
+        Path.GetTempPath(),
+        "aetherium-dat-gate-" + Guid.NewGuid().ToString("N"));
+    var otherRoot = root + "-other";
+    Directory.CreateDirectory(root);
+    Directory.CreateDirectory(otherRoot);
+    try
+    {
+        Equal(
+            SharedDatLaunchGate.GetMutexNameForTest(root),
+            SharedDatLaunchGate.GetMutexNameForTest(root + Path.DirectorySeparatorChar),
+            "shared DAT mutex normalizes trailing separators");
+        Equal(
+            SharedDatLaunchGate.GetMutexNameForTest(root),
+            SharedDatLaunchGate.GetMutexNameForTest(root.ToUpperInvariant()),
+            "shared DAT mutex normalizes Windows path casing");
+        True(
+            !string.Equals(
+                SharedDatLaunchGate.GetMutexNameForTest(root),
+                SharedDatLaunchGate.GetMutexNameForTest(otherRoot),
+                StringComparison.Ordinal),
+            "separate AC installs use independent shared DAT mutexes");
+
+        using (var owner = SharedDatLaunchGate.Acquire(root))
+        {
+            var secondWriterRejected = false;
+            try
+            {
+                using var duplicate = SharedDatLaunchGate.Acquire(root);
+            }
+            catch (SharedDatBusyException)
+            {
+                secondWriterRejected = true;
+            }
+
+            True(secondWriterRejected, "shared DAT gate rejects a concurrent writer");
+
+            using var independentInstall = SharedDatLaunchGate.Acquire(otherRoot);
+            True(
+                !string.Equals(
+                    owner.MutexName,
+                    independentInstall.MutexName,
+                    StringComparison.Ordinal),
+                "another install can update while the first install is locked");
+
+            using var canceled = new CancellationTokenSource();
+            canceled.Cancel();
+            var canceledWaitRejected = false;
+            try
+            {
+                using var duplicate = SharedDatLaunchGate.AcquireWhenAvailable(
+                    root,
+                    canceled.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                canceledWaitRejected = true;
+            }
+
+            True(
+                canceledWaitRejected,
+                "queued shared DAT launch cancels without creating a second writer");
+        }
+
+        var queuedOwner = SharedDatLaunchGate.Acquire(root);
+        using var queuedStarted = new ManualResetEventSlim(false);
+        var queuedAcquire = Task.Run(() =>
+        {
+            queuedStarted.Set();
+            return SharedDatLaunchGate.AcquireWhenAvailable(
+                root,
+                CancellationToken.None);
+        });
+        queuedStarted.Wait();
+        Thread.Sleep(SharedDatLaunchGate.PollInterval + SharedDatLaunchGate.PollInterval);
+        True(
+            !queuedAcquire.IsCompleted,
+            "queued second launch waits while the first install owns the DAT mutex");
+        queuedOwner.Dispose();
+        using (var queuedLease = queuedAcquire.GetAwaiter().GetResult())
+        {
+            Equal(
+                SharedDatLaunchGate.GetMutexNameForTest(root),
+                queuedLease.MutexName,
+                "queued second launch becomes the updater after the first releases");
+        }
+
+        using (var afterRelease = SharedDatLaunchGate.Acquire(root))
+        {
+            True(
+                !afterRelease.RecoveredAbandonedOwner,
+                "normal owner release is not reported as crash recovery");
+        }
+
+        var mutexName = SharedDatLaunchGate.GetMutexNameForTest(root);
+        using var abandonedMutex = new Mutex(initiallyOwned: false, mutexName);
+        using var abandonedReady = new ManualResetEventSlim(false);
+        var crashedOwner = new Thread(() =>
+        {
+            abandonedMutex.WaitOne();
+            abandonedReady.Set();
+            // Deliberately exit without ReleaseMutex. Windows marks this mutex
+            // abandoned exactly as it would if a launcher process were killed.
+        });
+        crashedOwner.Start();
+        abandonedReady.Wait();
+        crashedOwner.Join();
+
+        using var recovered = SharedDatLaunchGate.Acquire(root);
+        True(
+            recovered.RecoveredAbandonedOwner,
+            "abandoned/crashed shared DAT owner becomes the next retry owner");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+        Directory.Delete(otherRoot, recursive: true);
+    }
+}
+
 [DllImport("SlotIsolation.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
 static extern int SlotIsolation_RewriteA(
     string path,
@@ -645,6 +767,7 @@ Equal((byte)'2', NativeClientDddAcceleration.CapabilityVersionForTest()[0],
     "capability-version clone");
 
 var remoteBase = new IntPtr(0x0100_0000);
+var datDrainStateAddress = IntPtr.Add(remoteBase, 0x10_000);
 var remoteCode = NativeClientDddAcceleration.BuildRemoteCode(remoteBase);
 Equal(NativeClientDddAcceleration.RemoteCodeSize, remoteCode.Length, "remote code size");
 var wrapperLength =
@@ -711,11 +834,13 @@ Equal(
         remoteBase),
     "admin trampoline continuation");
 
-var statusWrapper = NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest();
+var statusWrapper = NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest(datDrainStateAddress);
 BytesEqual(
     Convert.FromHexString(
-        "33C08379180375278B510485D27420833A00751B8B510885D27406837A6000750E" +
-        "8B510C85D27406837A6000750140C21000"),
+        "33C0837918030F856A0000008B510485D20F845F000000833A000F8556000000" +
+        "8B510885D20F840A000000837A60000F85410000008B510C85D20F840A000000" +
+        "837A60000F852C000000BA00000101833A010F8414000000833A020F8411000000" +
+        "C70203000000E906000000C7020200000040C21000BA00000101C70201000000C21000"),
     statusWrapper,
     "download-status drain wrapper source");
 BytesEqual(
@@ -726,7 +851,7 @@ BytesEqual(
     "download-status drain wrapper placement");
 statusWrapper[0] = 0;
 Equal((byte)0x33,
-    NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest()[0],
+    NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest(datDrainStateAddress)[0],
     "download-status wrapper clone");
 
 var spellSignature = NativeClientDddAcceleration.SpellRegionSignatureForTest();
@@ -910,27 +1035,27 @@ True(
     "public SpellRegion wrapper does not use admin GetText");
 
 var trampolineEnd = trampoline + 6 + 5;
-True(trampolineEnd <= NativeClientDddAcceleration.DownloadStatusWrapperOffset,
-    "trampoline/status-wrapper non-overlap");
+True(trampolineEnd <= NativeClientDddAcceleration.SpellRegionWrapperOffset,
+    "trampoline/SpellRegion non-overlap");
 True(
     NativeClientDddAcceleration.DownloadStatusWrapperOffset +
-        NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest().Length <=
-    NativeClientDddAcceleration.SpellRegionWrapperOffset,
-    "status-wrapper/SpellRegion non-overlap");
+        NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest(datDrainStateAddress).Length <=
+    NativeClientDddAcceleration.RemoteCodeSize,
+    "status-wrapper remote-block containment");
 True(
     NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength <=
     NativeClientDddAcceleration.SetIntSignedWrapperOffset,
     "SpellRegion wrapper/SetInt non-overlap");
 True(remoteCode[wrapperLength..trampoline].All(value => value == 0xCC),
     "wrapper/trampoline padding");
-True(remoteCode[trampolineEnd..NativeClientDddAcceleration.DownloadStatusWrapperOffset]
+True(remoteCode[trampolineEnd..NativeClientDddAcceleration.SpellRegionWrapperOffset]
         .All(value => value == 0xCC),
-    "trampoline/status-wrapper padding");
+    "trampoline/SpellRegion padding");
 var statusEnd = NativeClientDddAcceleration.DownloadStatusWrapperOffset +
-    NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest().Length;
-True(remoteCode[statusEnd..NativeClientDddAcceleration.SpellRegionWrapperOffset]
+    NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest(datDrainStateAddress).Length;
+True(remoteCode[statusEnd..NativeClientDddAcceleration.RemoteCodeSize]
         .All(value => value == 0xCC),
-    "status-wrapper/SpellRegion padding");
+    "status-wrapper tail padding");
 True(remoteCode[
         (NativeClientDddAcceleration.SpellRegionWrapperOffset + spellWrapperLength)..
         NativeClientDddAcceleration.SetIntSignedWrapperOffset]
@@ -954,7 +1079,7 @@ var statusPatch = NativeClientDddAcceleration.BuildDownloadStatusTailPatch(
     downloadStatusTailAddress,
     statusWrapperAddress);
 BytesEqual(
-    Convert.FromHexString("E9C730BF00909090909090909090"),
+    Convert.FromHexString("E92737BF00909090909090909090"),
     statusPatch,
     "download-status tail detour");
 Equal(statusWrapperAddress,
@@ -1562,6 +1687,7 @@ try
         ClientLauncher.ShouldRemoveLegacyMulticlient(new LaunchConfig()),
         "ordinary launch retains legacy multiclient migration");
     ProveAccountSlots();
+    ProveSharedDatLaunchGate();
 
     foreach (var disallowedPath in new[]
              {
@@ -1699,7 +1825,7 @@ Console.WriteLine(
     "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
     "exact client signatures, SpellRegion in-place duration-glyph hitch bypass, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
-    "layouts, branches, and detours verified.");
+    "shared-DAT launch serialization, layouts, branches, and detours verified.");
 
 if (args is ["--verify-game-install", var gameInstallDirectory])
 {

@@ -190,10 +190,12 @@ internal sealed class NativeClientDddAccelerationInstallation
     internal NativeClientDddAccelerationInstallation(
         string detail,
         NativeClientDddAccelerationProfile profile,
+        IntPtr datDrainStateAddress,
         IReadOnlyList<NativeClientDddAcceleration.RemotePatchRegion> regions)
     {
         Detail = detail;
         Profile = profile;
+        DatDrainStateAddress = datDrainStateAddress;
         Regions = regions;
     }
 
@@ -201,7 +203,17 @@ internal sealed class NativeClientDddAccelerationInstallation
 
     internal NativeClientDddAccelerationProfile Profile { get; }
 
+    internal IntPtr DatDrainStateAddress { get; }
+
     internal IReadOnlyList<NativeClientDddAcceleration.RemotePatchRegion> Regions { get; }
+}
+
+internal enum NativeDatDrainState
+{
+    Unknown = 0,
+    Busy = 1,
+    ReadyForPromotion = 2,
+    PromotionComplete = 3,
 }
 
 /// <summary>
@@ -283,7 +295,7 @@ internal static class NativeClientDddAcceleration
     internal const uint InfoBoxSetParentTailRva = 0x000C_F8D2;
     internal const uint AdminInfoBoxSetParentTailRva = 0x000D_70E2;
     internal const int UseTimeTrampolineOffset = 0x80;
-    internal const int DownloadStatusWrapperOffset = 0xA0;
+    internal const int DownloadStatusWrapperOffset = 0x700;
     internal const int SpellRegionWrapperOffset = 0x100;
     internal const int SetIntSignedWrapperOffset = 0x280;
     internal const int SetIntSignedTrampolineOffset = 0x400;
@@ -295,7 +307,8 @@ internal static class NativeClientDddAcceleration
     internal const int InfoBoxTrampolineOffset = 0x640;
     internal const int AllegPanelWrapperOffset = 0x650;
     internal const int AllegPanelTrampolineOffset = 0x6B0;
-    internal const int RemoteCodeSize = 0x700;
+    internal const int RemoteCodeSize = 0x800;
+    internal const int DatDrainStateSize = sizeof(int);
     internal const int StolenDetourLength = 8;
     internal const int InfoBoxStolenLength = 5;
     internal const string CapabilityVersion = "2005.02.A09";
@@ -482,30 +495,6 @@ internal static class NativeClientDddAcceleration
     [
         0x8B, 0x51, 0x18, 0x33, 0xC0, 0x83, 0xFA,
         0x03, 0x0F, 0x94, 0xC0, 0xC2, 0x10, 0x00,
-    ];
-
-    private static readonly byte[] DownloadStatusDrainWrapper =
-    [
-        0x33, 0xC0,                         // xor eax, eax
-        0x83, 0x79, 0x18, 0x03,             // cmp dword ptr [ecx+18h], 3
-        0x75, 0x27,                         // jne false
-        0x8B, 0x51, 0x04,                   // mov edx, [ecx+4] (queue header)
-        0x85, 0xD2,                         // test edx, edx
-        0x74, 0x20,                         // jz false
-        0x83, 0x3A, 0x00,                   // cmp dword ptr [edx], 0 (queue head)
-        0x75, 0x1B,                         // jne false
-        0x8B, 0x51, 0x08,                   // mov edx, [ecx+8] (portal cache)
-        0x85, 0xD2,                         // test edx, edx
-        0x74, 0x06,                         // jz cell
-        0x83, 0x7A, 0x60, 0x00,             // cmp dword ptr [edx+60h], 0
-        0x75, 0x0E,                         // jne false
-        0x8B, 0x51, 0x0C,                   // cell: mov edx, [ecx+0Ch]
-        0x85, 0xD2,                         // test edx, edx
-        0x74, 0x06,                         // jz true
-        0x83, 0x7A, 0x60, 0x00,             // cmp dword ptr [edx+60h], 0
-        0x75, 0x01,                         // jne false
-        0x40,                               // true: inc eax
-        0xC2, 0x10, 0x00,                   // false: ret 10h
     ];
 
     private static readonly byte[] OriginalVersionLiteral =
@@ -725,6 +714,24 @@ internal static class NativeClientDddAcceleration
             throw Win32Failure("VirtualAllocEx failed while preparing accelerated DAT repair");
         }
 
+        var datDrainState = VirtualAllocEx(
+            processHandle,
+            IntPtr.Zero,
+            DatDrainStateSize,
+            MemCommit | MemReserve,
+            PageReadWrite);
+        if (datDrainState == IntPtr.Zero)
+        {
+            VirtualFreeEx(processHandle, remoteCode, 0, MemRelease);
+            throw Win32Failure("VirtualAllocEx failed while preparing DAT drain coordination");
+        }
+
+        WriteExact(
+            processHandle,
+            datDrainState,
+            new byte[DatDrainStateSize],
+            "DAT drain coordination state");
+
         var committed = false;
         var useTimePatchAttempted = false;
         var downloadStatusPatchAttempted = false;
@@ -737,7 +744,7 @@ internal static class NativeClientDddAcceleration
         var versionPatchAttempted = false;
         try
         {
-            var code = BuildRemoteCode(remoteCode, profile);
+            var code = BuildRemoteCode(remoteCode, profile, datDrainState);
             WriteExact(processHandle, remoteCode, code, "accelerated DAT repair code");
             ProtectExact(
                 processHandle,
@@ -891,6 +898,7 @@ internal static class NativeClientDddAcceleration
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active; " +
                 "SpellRegion duration-text hitch bypass active (in-place m:ss glyphs); number-label hitch bypass active).",
                 profile,
+                datDrainState,
                 [
                     new RemotePatchRegion(
                         remoteCode,
@@ -1097,6 +1105,7 @@ internal static class NativeClientDddAcceleration
         {
             if (!committed)
             {
+                VirtualFreeEx(processHandle, datDrainState, 0, MemRelease);
                 VirtualFreeEx(processHandle, remoteCode, 0, MemRelease);
             }
         }
@@ -1117,6 +1126,43 @@ internal static class NativeClientDddAcceleration
         }
     }
 
+    internal static NativeDatDrainState ReadDatDrainState(
+        IntPtr processHandle,
+        NativeClientDddAccelerationInstallation installation)
+    {
+        ArgumentNullException.ThrowIfNull(installation);
+        if (installation.DatDrainStateAddress == IntPtr.Zero)
+        {
+            return NativeDatDrainState.Unknown;
+        }
+
+        var bytes = ReadExact(
+            processHandle,
+            installation.DatDrainStateAddress,
+            DatDrainStateSize,
+            "DAT drain coordination state");
+        var raw = BinaryPrimitives.ReadInt32LittleEndian(bytes);
+        return raw switch
+        {
+            (int)NativeDatDrainState.Busy => NativeDatDrainState.Busy,
+            (int)NativeDatDrainState.ReadyForPromotion => NativeDatDrainState.ReadyForPromotion,
+            (int)NativeDatDrainState.PromotionComplete => NativeDatDrainState.PromotionComplete,
+            _ => NativeDatDrainState.Unknown,
+        };
+    }
+
+    internal static void MarkDatPromotionComplete(
+        IntPtr processHandle,
+        NativeClientDddAccelerationInstallation installation)
+    {
+        ArgumentNullException.ThrowIfNull(installation);
+        WriteExact(
+            processHandle,
+            installation.DatDrainStateAddress,
+            BitConverter.GetBytes((int)NativeDatDrainState.PromotionComplete),
+            "DAT promotion completion state");
+    }
+
     internal sealed class RemotePatchRegion
     {
         internal RemotePatchRegion(IntPtr address, byte[] expectedBytes, string label)
@@ -1135,19 +1181,40 @@ internal static class NativeClientDddAcceleration
 
     internal static byte[] BuildRemoteCode(IntPtr remoteCodeAddress)
     {
-        return BuildRemoteCode(remoteCodeAddress, PublicProfile);
+        return BuildRemoteCode(
+            remoteCodeAddress,
+            PublicProfile,
+            Add(remoteCodeAddress, 0x10_000));
     }
 
     internal static byte[] BuildRemoteCode(
         IntPtr remoteCodeAddress,
         NativeClientDddAccelerationProfile profile)
     {
+        return BuildRemoteCode(
+            remoteCodeAddress,
+            profile,
+            Add(remoteCodeAddress, 0x10_000));
+    }
+
+    internal static byte[] BuildRemoteCode(
+        IntPtr remoteCodeAddress,
+        NativeClientDddAccelerationProfile profile,
+        IntPtr datDrainStateAddress)
+    {
         ArgumentNullException.ThrowIfNull(profile);
+        if (datDrainStateAddress == IntPtr.Zero)
+        {
+            throw new ArgumentException(
+                "DAT drain state address must be non-zero.",
+                nameof(datDrainStateAddress));
+        }
         var code = Enumerable.Repeat((byte)0xCC, RemoteCodeSize).ToArray();
         var trampolineAddress = Add(remoteCodeAddress, UseTimeTrampolineOffset);
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             trampolineAddress,
+            datDrainStateAddress,
             out _);
         if (wrapper.Length > UseTimeTrampolineOffset)
         {
@@ -1171,20 +1238,11 @@ internal static class NativeClientDddAcceleration
             originalContinuation);
 
         var trampolineEnd = UseTimeTrampolineOffset + OriginalUseTimePrologue.Length + 5;
-        if (trampolineEnd > DownloadStatusWrapperOffset)
+        if (trampolineEnd > SpellRegionWrapperOffset)
         {
             throw new InvalidOperationException(
-                "The CLCache::UseTime trampoline overlaps the download-status wrapper.");
+                "The CLCache::UseTime trampoline overlaps the SpellRegion wrapper.");
         }
-
-        var statusEnd = DownloadStatusWrapperOffset + DownloadStatusDrainWrapper.Length;
-        if (statusEnd > SpellRegionWrapperOffset)
-        {
-            throw new InvalidOperationException(
-                "The download-status wrapper overlaps the SpellRegion wrapper.");
-        }
-
-        DownloadStatusDrainWrapper.CopyTo(code, DownloadStatusWrapperOffset);
 
         var spellRegionAddress = Add(remoteCodeAddress, SpellRegionWrapperOffset);
         var spellRegionWrapper = BuildSpellRegionWrapper(spellRegionAddress, profile);
@@ -1254,7 +1312,7 @@ internal static class NativeClientDddAcceleration
             remoteCodeAddress,
             AllegPanelWrapperOffset,
             AllegPanelTrampolineOffset,
-            code.Length,
+            DownloadStatusWrapperOffset,
             BuildAllegPanelWrapper(
                 Add(remoteCodeAddress, AllegPanelWrapperOffset),
                 Add(remoteCodeAddress, AllegPanelTrampolineOffset)),
@@ -1263,6 +1321,15 @@ internal static class NativeClientDddAcceleration
                 profile.PreferredImageBase + numbers.AllegPanelSetXpChangeRva + StolenDetourLength),
             "AllegPanel::SetXPChange");
 
+        var downloadStatusWrapper = BuildDownloadStatusDrainWrapper(datDrainStateAddress);
+        var statusEnd = DownloadStatusWrapperOffset + downloadStatusWrapper.Length;
+        if (statusEnd > code.Length)
+        {
+            throw new InvalidOperationException(
+                "The download-status wrapper exceeds the remote code block.");
+        }
+
+        downloadStatusWrapper.CopyTo(code, DownloadStatusWrapperOffset);
         return code;
     }
 
@@ -1804,16 +1871,94 @@ internal static class NativeClientDddAcceleration
         return wrapper;
     }
 
+    private static byte[] BuildDownloadStatusDrainWrapper(IntPtr datDrainStateAddress)
+    {
+        var rawAddress = datDrainStateAddress.ToInt64();
+        if (rawAddress is <= 0 or > uint.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(datDrainStateAddress),
+                "DAT drain state must be an x86 user-mode address.");
+        }
+
+        var stateAddress = BitConverter.GetBytes(unchecked((uint)rawAddress));
+        var code = new X86CodeBuilder();
+
+        void EmitStatePointer()
+        {
+            code.Emit(0xBA);                                  // mov edx, imm32
+            code.Emit(stateAddress);
+        }
+
+        code.Emit(0x33, 0xC0);                                // xor eax, eax
+        EmitStatePointer();
+        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.PromotionComplete);
+        code.JumpIf(0x84, "success");                         // launcher promoted the seed
+        code.Emit(0x83, 0x79, 0x18, 0x03);                    // cmp dword ptr [ecx+18h], 3
+        code.JumpIf(0x85, "busy");                            // jne busy
+        code.Emit(0x8B, 0x51, 0x04);                          // mov edx, [ecx+4] (queue header)
+        code.Emit(0x85, 0xD2);                                // test edx, edx
+        code.JumpIf(0x84, "busy");                            // jz busy
+        code.Emit(0x83, 0x3A, 0x00);                          // cmp dword ptr [edx], 0
+        code.JumpIf(0x85, "busy");                            // jne busy
+        code.Emit(0x8B, 0x51, 0x08);                          // mov edx, [ecx+8] (portal cache)
+        code.Emit(0x85, 0xD2);                                // test edx, edx
+        code.JumpIf(0x84, "check_cell");                      // jz check_cell
+        code.Emit(0x83, 0x7A, 0x60, 0x00);                    // cmp dword ptr [edx+60h], 0
+        code.JumpIf(0x85, "busy");                            // jne busy
+
+        code.Mark("check_cell");
+        code.Emit(0x8B, 0x51, 0x0C);                          // mov edx, [ecx+0Ch]
+        code.Emit(0x85, 0xD2);                                // test edx, edx
+        code.JumpIf(0x84, "ready_state");                     // jz ready_state
+        code.Emit(0x83, 0x7A, 0x60, 0x00);                    // cmp dword ptr [edx+60h], 0
+        code.JumpIf(0x85, "busy");                            // jne busy
+
+        code.Mark("ready_state");
+        EmitStatePointer();
+        code.Emit(
+            0xC7, 0x02,
+            (byte)NativeDatDrainState.ReadyForPromotion, 0, 0, 0);
+        code.Emit(0xC2, 0x10, 0x00);                          // keep patch UI incomplete
+
+        code.Mark("success");
+        code.Emit(0x40);                                      // inc eax
+        code.Emit(0xC2, 0x10, 0x00);                          // ret 10h
+
+        code.Mark("busy");
+        EmitStatePointer();
+        code.Emit(
+            0xC7, 0x02,
+            (byte)NativeDatDrainState.Busy, 0, 0, 0);         // mov dword ptr [edx], 1
+        code.Emit(0xC2, 0x10, 0x00);                          // ret 10h
+
+        return code.Build();
+    }
+
     private static byte[] BuildUseTimeWrapper(
         IntPtr wrapperAddress,
         IntPtr trampolineAddress,
+        IntPtr datDrainStateAddress,
         out int originalCallOffset)
     {
+        var rawStateAddress = datDrainStateAddress.ToInt64();
+        if (rawStateAddress is <= 0 or > uint.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(datDrainStateAddress),
+                "DAT drain state must be an x86 user-mode address.");
+        }
+
+        var stateAddress = BitConverter.GetBytes(unchecked((uint)rawStateAddress));
         var code = new X86CodeBuilder();
         code.Emit(0x53);                                      // push ebx
         code.Emit(0x56);                                      // push esi
         code.Emit(0x57);                                      // push edi
         code.Emit(0x8B, 0xF1);                                // mov esi, ecx
+        code.Emit(0xBF);                                      // mov edi, imm32
+        code.Emit(stateAddress);
+        code.Emit(0x83, 0x3F, (byte)NativeDatDrainState.ReadyForPromotion);
+        code.JumpIf(0x84, "done");                            // freeze CLCache while seed copies
         code.Emit(0xBB, (byte)MaxMessagesPerFrame, 0, 0, 0);  // mov ebx, 8
 
         code.Mark("check_inbound");
@@ -2020,14 +2165,15 @@ internal static class NativeClientDddAcceleration
             Add(remoteCodeAddress, AllegPanelWrapperOffset),
             Add(remoteCodeAddress, AllegPanelTrampolineOffset));
 
-    internal static byte[] DownloadStatusDrainWrapperForTest() =>
-        (byte[])DownloadStatusDrainWrapper.Clone();
+    internal static byte[] DownloadStatusDrainWrapperForTest(IntPtr datDrainStateAddress) =>
+        BuildDownloadStatusDrainWrapper(datDrainStateAddress);
 
     internal static int UseTimeWrapperLengthForTest(IntPtr remoteCodeAddress)
     {
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
+            Add(remoteCodeAddress, 0x10_000),
             out _);
         return wrapper.Length;
     }
@@ -2037,6 +2183,7 @@ internal static class NativeClientDddAcceleration
         _ = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
+            Add(remoteCodeAddress, 0x10_000),
             out var callOffset);
         return callOffset;
     }

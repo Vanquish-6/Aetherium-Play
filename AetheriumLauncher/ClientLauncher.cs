@@ -31,7 +31,8 @@ public static class ClientLauncher
         LaunchConfig config,
         string? dgVoodooToolsDirectory = null,
         bool prepareGraphics = true,
-        Action<string>? report = null)
+        Action<string>? report = null,
+        CancellationToken cancellationToken = default)
     {
         var (installDirectory, clientPath, expectedProfile) = ResolveValidatedLaunchTarget(config);
 
@@ -81,13 +82,29 @@ public static class ClientLauncher
 
         // Suspend → slot isolation → optional vintage Decal inject → resume.
         // Isolation is an injected DLL. client.exe, portal.dat, and cell.dat stay shared.
-        var process = NativeProcess.StartSuspendedClient(
-            clientPath,
-            workingDirectory,
-            arguments,
-            out var processHandle,
-            out var threadHandle,
-            slotEnvironment.ToProcessEnvironment());
+        // Only one client using this install may enter the login-time shared DAT
+        // transaction at once.
+        SharedDatLaunchLease? datLaunchLease =
+            SharedDatLaunchGate.AcquireWhenAvailable(installDirectory, cancellationToken);
+        Process process;
+        IntPtr processHandle;
+        IntPtr threadHandle;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            process = NativeProcess.StartSuspendedClient(
+                clientPath,
+                workingDirectory,
+                arguments,
+                out processHandle,
+                out threadHandle,
+                slotEnvironment.ToProcessEnvironment());
+        }
+        catch
+        {
+            datLaunchLease.Dispose();
+            throw;
+        }
 
         NativeClientDddAccelerationInstallation? dddAcceleration = null;
         ClientAntiTamperContainment? containment = null;
@@ -156,9 +173,20 @@ public static class ClientLauncher
             // Close the first-interval race with a synchronous post-resume scan;
             // the resident thread then continues scan-before-wait every two seconds.
             antiTamper.VerifyNow();
+
+            // Transfer the lease to a background monitor. It is released only
+            // after the A09 completion hook proves the login DAT transaction is
+            // fully drained (or the client exits/crashes).
+            SharedDatLaunchGate.ReleaseWhenClientDatSafe(
+                datLaunchLease,
+                process,
+                dddAcceleration,
+                report);
+            datLaunchLease = null;
         }
         catch
         {
+            datLaunchLease?.Dispose();
             if (antiTamper is not null)
             {
                 antiTamper.Dispose();
