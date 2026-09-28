@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.40 - 2026-09-28
+
+### Fixed
+
+- Multi-client DAT writes are isolated for the entire game session. Each account
+  slot now runs from its own writable `portal.dat` / `cell.dat` workspace;
+  the slot-isolation DLL no longer forces `FILE_SHARE_WRITE` on DAT handles.
+- Login repair is sent once per install. A machine-wide seed mutex queues the
+  second slot while A10 finishes the first slot's CLCache/DAT writers. A10 then
+  freezes CLCache, the launcher atomically promotes that completed DAT pair to
+  the install seed, acknowledges promotion, and only then releases the next
+  queued slot. The second slot clones the promoted revision before connecting,
+  so it does not request the same login repair.
+- The DAT gates fail closed. Separate installs and account slots use independent
+  mutexes; launcher shutdown cancels queued starts; a killed launcher produces
+  an abandoned owner so the next launch retries normal revision repair instead
+  of treating an interrupted write as complete.
+- The required remote capability marker is now `2005.02.A10`, preventing older
+  A09 launchers from bypassing the new DAT-isolation protocol.
+
 ## 1.0.39 - 2026-09-28
 
 ### Fixed

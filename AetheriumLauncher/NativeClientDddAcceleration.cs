@@ -212,12 +212,12 @@ internal enum NativeDatDrainState
 {
     Unknown = 0,
     Busy = 1,
-    DrainedAfterBusy = 2,
-    IdleObserved = 3,
+    ReadyForPromotion = 2,
+    PromotionComplete = 3,
 }
 
 /// <summary>
-/// Applies the Aetherium process-local A09 hooks to a verified public or
+/// Applies the Aetherium process-local A10 hooks to a verified public or
 /// admin DM client. The patch never modifies client.exe on disk.
 ///
 /// Two CLCache detours drain inbound DAT work faster and hold the patch UI
@@ -294,7 +294,7 @@ internal static class NativeClientDddAcceleration
     internal const uint AdminInfoBoxSetAvailableRva = 0x000D_6FE0;
     internal const uint InfoBoxSetParentTailRva = 0x000C_F8D2;
     internal const uint AdminInfoBoxSetParentTailRva = 0x000D_70E2;
-    internal const int UseTimeTrampolineOffset = 0x80;
+    internal const int UseTimeTrampolineOffset = 0x90;
     internal const int DownloadStatusWrapperOffset = 0x700;
     internal const int SpellRegionWrapperOffset = 0x100;
     internal const int SetIntSignedWrapperOffset = 0x280;
@@ -311,7 +311,7 @@ internal static class NativeClientDddAcceleration
     internal const int DatDrainStateSize = sizeof(int);
     internal const int StolenDetourLength = 8;
     internal const int InfoBoxStolenLength = 5;
-    internal const string CapabilityVersion = "2005.02.A09";
+    internal const string CapabilityVersion = "2005.02.A10";
     internal const int TextRegionFontOffset = 0xC8;
     internal const int TextRegionLineCountOffset = 0x10C;
     internal const int TextRegionLineBuffOffset = 0x110;
@@ -1145,10 +1145,22 @@ internal static class NativeClientDddAcceleration
         return raw switch
         {
             (int)NativeDatDrainState.Busy => NativeDatDrainState.Busy,
-            (int)NativeDatDrainState.DrainedAfterBusy => NativeDatDrainState.DrainedAfterBusy,
-            (int)NativeDatDrainState.IdleObserved => NativeDatDrainState.IdleObserved,
+            (int)NativeDatDrainState.ReadyForPromotion => NativeDatDrainState.ReadyForPromotion,
+            (int)NativeDatDrainState.PromotionComplete => NativeDatDrainState.PromotionComplete,
             _ => NativeDatDrainState.Unknown,
         };
+    }
+
+    internal static void MarkDatPromotionComplete(
+        IntPtr processHandle,
+        NativeClientDddAccelerationInstallation installation)
+    {
+        ArgumentNullException.ThrowIfNull(installation);
+        WriteExact(
+            processHandle,
+            installation.DatDrainStateAddress,
+            BitConverter.GetBytes((int)NativeDatDrainState.PromotionComplete),
+            "DAT promotion completion state");
     }
 
     internal sealed class RemotePatchRegion
@@ -1202,6 +1214,7 @@ internal static class NativeClientDddAcceleration
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             trampolineAddress,
+            datDrainStateAddress,
             out _);
         if (wrapper.Length > UseTimeTrampolineOffset)
         {
@@ -1878,6 +1891,9 @@ internal static class NativeClientDddAcceleration
         }
 
         code.Emit(0x33, 0xC0);                                // xor eax, eax
+        EmitStatePointer();
+        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.PromotionComplete);
+        code.JumpIf(0x84, "success");                         // launcher promoted the seed
         code.Emit(0x83, 0x79, 0x18, 0x03);                    // cmp dword ptr [ecx+18h], 3
         code.JumpIf(0x85, "busy");                            // jne busy
         code.Emit(0x8B, 0x51, 0x04);                          // mov edx, [ecx+4] (queue header)
@@ -1900,19 +1916,10 @@ internal static class NativeClientDddAcceleration
 
         code.Mark("ready_state");
         EmitStatePointer();
-        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.Busy);// cmp dword ptr [edx], 1
-        code.JumpIf(0x84, "drained_after_busy");              // je drained_after_busy
-        code.Emit(0x83, 0x3A, (byte)NativeDatDrainState.DrainedAfterBusy);
-        code.JumpIf(0x84, "success");                         // preserve completed state
         code.Emit(
             0xC7, 0x02,
-            (byte)NativeDatDrainState.IdleObserved, 0, 0, 0); // mov dword ptr [edx], 3
-        code.Jump("success");
-
-        code.Mark("drained_after_busy");
-        code.Emit(
-            0xC7, 0x02,
-            (byte)NativeDatDrainState.DrainedAfterBusy, 0, 0, 0);
+            (byte)NativeDatDrainState.ReadyForPromotion, 0, 0, 0);
+        code.Emit(0xC2, 0x10, 0x00);                          // keep patch UI incomplete
 
         code.Mark("success");
         code.Emit(0x40);                                      // inc eax
@@ -1931,13 +1938,27 @@ internal static class NativeClientDddAcceleration
     private static byte[] BuildUseTimeWrapper(
         IntPtr wrapperAddress,
         IntPtr trampolineAddress,
+        IntPtr datDrainStateAddress,
         out int originalCallOffset)
     {
+        var rawStateAddress = datDrainStateAddress.ToInt64();
+        if (rawStateAddress is <= 0 or > uint.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(datDrainStateAddress),
+                "DAT drain state must be an x86 user-mode address.");
+        }
+
+        var stateAddress = BitConverter.GetBytes(unchecked((uint)rawStateAddress));
         var code = new X86CodeBuilder();
         code.Emit(0x53);                                      // push ebx
         code.Emit(0x56);                                      // push esi
         code.Emit(0x57);                                      // push edi
         code.Emit(0x8B, 0xF1);                                // mov esi, ecx
+        code.Emit(0xBF);                                      // mov edi, imm32
+        code.Emit(stateAddress);
+        code.Emit(0x83, 0x3F, (byte)NativeDatDrainState.ReadyForPromotion);
+        code.JumpIf(0x84, "done");                            // freeze CLCache while seed copies
         code.Emit(0xBB, (byte)MaxMessagesPerFrame, 0, 0, 0);  // mov ebx, 8
 
         code.Mark("check_inbound");
@@ -2070,7 +2091,7 @@ internal static class NativeClientDddAcceleration
         string sha256) =>
         IdentifySupportedProfile(size, sha256)
         ?? throw new InvalidDataException(
-            $"No verified A09 client profile matches {size:N0} bytes / SHA-256 {sha256}.");
+            $"No verified A10 client profile matches {size:N0} bytes / SHA-256 {sha256}.");
 
     internal static byte[] DownloadStatusSignatureForTest() =>
         (byte[])ExpectedDownloadStatusSignature.Clone();
@@ -2152,6 +2173,7 @@ internal static class NativeClientDddAcceleration
         var wrapper = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
+            Add(remoteCodeAddress, 0x10_000),
             out _);
         return wrapper.Length;
     }
@@ -2161,6 +2183,7 @@ internal static class NativeClientDddAcceleration
         _ = BuildUseTimeWrapper(
             remoteCodeAddress,
             Add(remoteCodeAddress, UseTimeTrampolineOffset),
+            Add(remoteCodeAddress, 0x10_000),
             out var callOffset);
         return callOffset;
     }
@@ -2227,7 +2250,7 @@ internal static class NativeClientDddAcceleration
         if (!actual.AsSpan().SequenceEqual(expected))
         {
             throw new InvalidDataException(
-                $"The client {label} bytes did not match the expected verified A09 state.");
+                $"The client {label} bytes did not match the expected verified A10 state.");
         }
     }
 

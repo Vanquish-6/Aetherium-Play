@@ -521,27 +521,9 @@ static int EndsWithIW(const wchar_t* text, const wchar_t* suffix)
     return 1;
 }
 
-/* portal.dat and cell.dat are opened read/write while only shared for reading.
-   A second client then fails that open and reports the files as missing. */
-static DWORD ShareDataFileA(const char* path, DWORD share)
-{
-    if (EndsWithI(path, ".dat"))
-    {
-        return share | FILE_SHARE_READ | FILE_SHARE_WRITE;
-    }
-
-    return share;
-}
-
-static DWORD ShareDataFileW(const wchar_t* path, DWORD share)
-{
-    if (EndsWithIW(path, L".dat"))
-    {
-        return share | FILE_SHARE_READ | FILE_SHARE_WRITE;
-    }
-
-    return share;
-}
+/* DAT sharing is deliberately left at the stock client flags. Each
+   account slot now runs from its own writable portal.dat/cell.dat workspace,
+   so forcing FILE_SHARE_WRITE would only re-introduce cross-process corruption. */
 
 static HANDLE WINAPI Hook_CreateFileA(
     LPCSTR name,
@@ -557,7 +539,7 @@ static HANDLE WINAPI Hook_CreateFileA(
     return g_RealCreateFileA(
         opened,
         access,
-        ShareDataFileA(opened, share),
+        share,
         security,
         disposition,
         flags,
@@ -578,7 +560,7 @@ static HANDLE WINAPI Hook_CreateFileW(
     return g_RealCreateFileW(
         opened,
         access,
-        ShareDataFileW(opened, share),
+        share,
         security,
         disposition,
         flags,

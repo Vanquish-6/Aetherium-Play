@@ -40,9 +40,6 @@ public sealed class LaunchConfig
     public string SelectedSlotId { get; set; } = "1";
 
     [JsonIgnore]
-    public bool PreserveLegacyMulticlient { get; set; }
-
-    [JsonIgnore]
     public bool AnotherClientRunning { get; set; }
 
     public void EnsureSlots()

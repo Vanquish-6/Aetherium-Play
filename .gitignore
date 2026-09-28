@@ -13,6 +13,11 @@ artifacts/
 # Installer compiler intermediates
 Installer/Output/
 
+# Native slot-isolation build intermediates
+AetheriumLauncher/SlotIsolation.exp
+AetheriumLauncher/SlotIsolation.lib
+AetheriumLauncher/native/SlotIsolation.obj
+
 # Local logs and temporary bootstrap files
 *.log
 *.tmp

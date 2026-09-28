@@ -318,6 +318,123 @@ static void ProveAccountSlots()
     }
 }
 
+static void ProveClientDatWorkspaces()
+{
+    var root = Path.Combine(
+        Path.GetTempPath(),
+        "aetherium-dat-workspace-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    try
+    {
+        File.WriteAllBytes(Path.Combine(root, "client.exe"), [0x43, 0x4C, 0x49, 0x45, 0x4E, 0x54]);
+        File.WriteAllBytes(Path.Combine(root, "portal.dat"), [0x10, 0x20, 0x30]);
+        File.WriteAllBytes(Path.Combine(root, "cell.dat"), [0x40, 0x50, 0x60]);
+        File.WriteAllBytes(Path.Combine(root, "runtime.dll"), [0x70, 0x80]);
+
+        var slotOne = ClientDatWorkspace.PrepareFromSeed(root, "1");
+        True(
+            slotOne.WorkingDirectory.EndsWith(
+                Path.Combine("multiclient", "slot-1"),
+                StringComparison.OrdinalIgnoreCase),
+            "slot 1 uses a private DAT workspace");
+        BytesEqual(
+            [0x10, 0x20, 0x30],
+            File.ReadAllBytes(Path.Combine(slotOne.WorkingDirectory, "portal.dat")),
+            "slot 1 portal seeded from install root");
+        BytesEqual(
+            [0x40, 0x50, 0x60],
+            File.ReadAllBytes(Path.Combine(slotOne.WorkingDirectory, "cell.dat")),
+            "slot 1 cell seeded from install root");
+        BytesEqual(
+            [0x70, 0x80],
+            File.ReadAllBytes(Path.Combine(slotOne.WorkingDirectory, "runtime.dll")),
+            "slot runtime files are private copies");
+
+        File.WriteAllBytes(
+            Path.Combine(slotOne.WorkingDirectory, "portal.dat"),
+            [0x10, 0x20, 0x30, 0xAA]);
+        File.WriteAllBytes(
+            Path.Combine(slotOne.WorkingDirectory, "cell.dat"),
+            [0x40, 0x50, 0x60, 0xBB]);
+        ClientDatWorkspace.PromoteToSeed(slotOne.WorkingDirectory, root);
+
+        BytesEqual(
+            [0x10, 0x20, 0x30, 0xAA],
+            File.ReadAllBytes(Path.Combine(root, "portal.dat")),
+            "drained slot portal promotes to install seed");
+        BytesEqual(
+            [0x40, 0x50, 0x60, 0xBB],
+            File.ReadAllBytes(Path.Combine(root, "cell.dat")),
+            "drained slot cell promotes to install seed");
+
+        // Simulate power loss after portal.dat was replaced but before cell.dat.
+        // The durable stage+marker must replay the complete pair before any
+        // subsequent slot is allowed to clone the seed.
+        var interruptedTransaction = Guid.NewGuid().ToString("N");
+        var interruptedStage = Path.Combine(
+            root,
+            ".aetherium-dat-seed-stage",
+            interruptedTransaction);
+        Directory.CreateDirectory(interruptedStage);
+        File.WriteAllBytes(
+            Path.Combine(interruptedStage, "portal.dat"),
+            [0x10, 0x20, 0x30, 0xCC]);
+        File.WriteAllBytes(
+            Path.Combine(interruptedStage, "cell.dat"),
+            [0x40, 0x50, 0x60, 0xDD]);
+        File.WriteAllText(
+            Path.Combine(root, ".aetherium-dat-seed.pending"),
+            interruptedTransaction);
+        File.WriteAllBytes(
+            Path.Combine(root, "portal.dat"),
+            [0x10, 0x20, 0x30, 0xCC]);
+
+        ClientDatWorkspace.RecoverPendingSeedPromotion(root);
+        BytesEqual(
+            [0x10, 0x20, 0x30, 0xCC],
+            File.ReadAllBytes(Path.Combine(root, "portal.dat")),
+            "interrupted promotion replays portal from durable stage");
+        BytesEqual(
+            [0x40, 0x50, 0x60, 0xDD],
+            File.ReadAllBytes(Path.Combine(root, "cell.dat")),
+            "interrupted promotion repairs the paired cell before next launch");
+        True(
+            !File.Exists(Path.Combine(root, ".aetherium-dat-seed.pending")),
+            "recovered seed transaction clears its pending marker");
+
+        var slotTwo = ClientDatWorkspace.PrepareFromSeed(root, "2");
+        True(
+            !slotTwo.WorkingDirectory.Equals(
+                slotOne.WorkingDirectory,
+                StringComparison.OrdinalIgnoreCase),
+            "account slots never share a writable DAT directory");
+        BytesEqual(
+            [0x10, 0x20, 0x30, 0xCC],
+            File.ReadAllBytes(Path.Combine(slotTwo.WorkingDirectory, "portal.dat")),
+            "queued slot receives recovered promoted portal revision");
+        BytesEqual(
+            [0x40, 0x50, 0x60, 0xDD],
+            File.ReadAllBytes(Path.Combine(slotTwo.WorkingDirectory, "cell.dat")),
+            "queued slot receives recovered promoted cell revision");
+
+        var unsafeSlotRejected = false;
+        try
+        {
+            _ = ClientDatWorkspace.GetWorkspaceDirectory(root, "../");
+        }
+        catch (ArgumentException)
+        {
+            unsafeSlotRejected = true;
+        }
+
+        True(unsafeSlotRejected, "unsafe slot path cannot escape private DAT root");
+    }
+    finally
+    {
+        Directory.Delete(root, recursive: true);
+    }
+}
+
 static void ProveSharedDatLaunchGate()
 {
     var root = Path.Combine(
@@ -586,7 +703,7 @@ var capabilityVersion = NativeClientDddAcceleration.CapabilityVersionForTest();
 Equal(12, originalVersion.Length, "original version literal length");
 Equal(12, capabilityVersion.Length, "capability version literal length");
 BytesEqual("2005.02.001\0"u8.ToArray(), originalVersion, "original version literal");
-BytesEqual("2005.02.A09\0"u8.ToArray(), capabilityVersion, "capability version literal");
+BytesEqual("2005.02.A10\0"u8.ToArray(), capabilityVersion, "capability version literal");
 
 var publicProfile = NativeClientDddAcceleration.PublicProfileForTest();
 Equal(NativeClientDddAcceleration.PublicProfileId, publicProfile.Id, "public profile id");
@@ -772,31 +889,32 @@ var remoteCode = NativeClientDddAcceleration.BuildRemoteCode(remoteBase);
 Equal(NativeClientDddAcceleration.RemoteCodeSize, remoteCode.Length, "remote code size");
 var wrapperLength =
     NativeClientDddAcceleration.UseTimeWrapperLengthForTest(remoteBase);
-Equal(115, wrapperLength, "UseTime wrapper length");
+Equal(129, wrapperLength, "UseTime wrapper length");
 True(wrapperLength <= NativeClientDddAcceleration.UseTimeTrampolineOffset,
     "UseTime wrapper/trampoline non-overlap");
 
 var expectedUseTimeWrapper = Convert.FromHexString(
-    "5356578BF1BB080000008B460485C00F84330000008338000F842A0000008B7E0885FF" +
-    "0F840A000000837F60200F833C0000008B7E0C85FF0F840A000000837F60200F832700" +
-    "00008BCEE8310000004B0F84190000008B460485C00F840E0000008338000F84050000" +
-    "00E99BFFFFFF5F5E5BC3");
+    "5356578BF1BF00000101833F020F846A000000BB080000008B460485C00F8433000000" +
+    "8338000F842A0000008B7E0885FF0F840A000000837F60200F833C0000008B7E0C85FF" +
+    "0F840A000000837F60200F83270000008BCEE8330000004B0F84190000008B460485C0" +
+    "0F840E0000008338000F8405000000E99BFFFFFF5F5E5BC3");
 BytesEqual(expectedUseTimeWrapper, remoteCode[..wrapperLength],
     "high-water queue-drain wrapper");
 
 // Every internal branch must land on the intended instruction boundary.
 var expectedBranches = new (int Instruction, int Target)[]
 {
-    (15, 72),
-    (24, 72),
-    (35, 51),
-    (45, 111),
-    (56, 72),
-    (66, 111),
-    (80, 111),
-    (91, 111),
-    (100, 111),
-    (106, 10),
+    (13, 125),
+    (29, 86),
+    (38, 86),
+    (49, 65),
+    (59, 125),
+    (70, 86),
+    (80, 125),
+    (94, 125),
+    (105, 125),
+    (114, 125),
+    (120, 24),
 };
 foreach (var (instruction, target) in expectedBranches)
 {
@@ -806,7 +924,7 @@ foreach (var (instruction, target) in expectedBranches)
 
 var originalCall =
     NativeClientDddAcceleration.UseTimeOriginalCallOffsetForTest(remoteBase);
-Equal(74, originalCall, "wrapper original-call offset");
+Equal(88, originalCall, "wrapper original-call offset");
 Equal((byte)0xE8, remoteCode[originalCall], "wrapper CALL opcode");
 Equal(
     IntPtr.Add(remoteBase, NativeClientDddAcceleration.UseTimeTrampolineOffset),
@@ -837,10 +955,10 @@ Equal(
 var statusWrapper = NativeClientDddAcceleration.DownloadStatusDrainWrapperForTest(datDrainStateAddress);
 BytesEqual(
     Convert.FromHexString(
-        "33C0837918030F856A0000008B510485D20F845F000000833A000F8556000000" +
-        "8B510885D20F840A000000837A60000F85410000008B510C85D20F840A000000" +
-        "837A60000F852C000000BA00000101833A010F8414000000833A020F8411000000" +
-        "C70203000000E906000000C7020200000040C21000BA00000101C70201000000C21000"),
+        "33C0BA00000101833A030F8456000000837918030F85500000008B510485D20F84" +
+        "45000000833A000F853C0000008B510885D20F840A000000837A60000F85270000" +
+        "008B510C85D20F840A000000837A60000F8512000000BA00000101C70202000000" +
+        "C2100040C21000BA00000101C70201000000C21000"),
     statusWrapper,
     "download-status drain wrapper source");
 BytesEqual(
@@ -1679,14 +1797,8 @@ try
 
     True(failedStartRejectedBeforeCleanup, "unsupported launch rejected before side effects");
     True(File.Exists(legacyMarker), "unsupported launch preserved legacy multiclient marker");
-    True(
-        !ClientLauncher.ShouldRemoveLegacyMulticlient(
-            new LaunchConfig { PreserveLegacyMulticlient = true }),
-        "startup override preserves legacy multiclient");
-    True(
-        ClientLauncher.ShouldRemoveLegacyMulticlient(new LaunchConfig()),
-        "ordinary launch retains legacy multiclient migration");
     ProveAccountSlots();
+    ProveClientDatWorkspaces();
     ProveSharedDatLaunchGate();
 
     foreach (var disallowedPath in new[]
@@ -1822,10 +1934,10 @@ True(
     "Wine launch detail names the compatibility layer");
 
 Console.WriteLine(
-    "PASS: A09 public/admin profiles, UI install override, known memory-editor identity matching, " +
+    "PASS: A10 public/admin profiles, UI install override, known memory-editor identity matching, " +
     "exact client signatures, SpellRegion in-place duration-glyph hitch bypass, " +
     "rollback bytes, bounded high-water wrapper, worker-drain completion wrapper, " +
-    "shared-DAT launch serialization, layouts, branches, and detours verified.");
+    "private DAT workspaces, shared-seed serialization, layouts, branches, and detours verified.");
 
 if (args is ["--verify-game-install", var gameInstallDirectory])
 {
@@ -1863,7 +1975,7 @@ if (args is ["--trigger-live-integrity-canary", var canaryProcessIdText])
         canaryProcess.WaitForExit(ClientAntiTamper.ScanIntervalMilliseconds + 8_000),
         "launcher monitor terminated the live DDD canary client");
     Console.WriteLine(
-        $"PASS: live A09 integrity canary ended hash-verified client PID {canaryProcessId}.");
+        $"PASS: live A10 integrity canary ended hash-verified client PID {canaryProcessId}.");
 }
 
 if (args is ["--prepare-release-client", var releaseClientDirectory])
@@ -2366,7 +2478,7 @@ internal static class RemoteMemoryTest
                 .SequenceEqual(expectedCapability))
         {
             throw new InvalidDataException(
-                "Live integrity canary refused a client without the exact A09 marker.");
+                "Live integrity canary refused a client without the exact A10 marker.");
         }
 
         var useTimeAddress = new IntPtr(unchecked((int)(
@@ -2375,7 +2487,7 @@ internal static class RemoteMemoryTest
         if (useTimePatch[0] != 0xE9 || useTimePatch[5] != 0x90)
         {
             throw new InvalidDataException(
-                "Live integrity canary refused a client without the expected A09 UseTime detour.");
+                "Live integrity canary refused a client without the expected A10 UseTime detour.");
         }
 
         WriteByte(processHandle, useTimeAddress, 0x90);

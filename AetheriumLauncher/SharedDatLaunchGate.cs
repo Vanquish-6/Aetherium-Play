@@ -61,7 +61,7 @@ internal sealed class SharedDatLaunchLease : IDisposable
 /// The lease is a machine-wide named Windows mutex keyed from the normalized
 /// game-install path. A dedicated launcher thread owns the mutex because named
 /// mutex release is thread-affine; the DDD monitor only signals that owner
-/// thread after A09 proves CLCache and both native DAT writers are fully
+/// thread after A10 proves CLCache and both native DAT writers are fully
 /// drained. If the launcher is killed, Windows abandons the mutex and the next
 /// launcher can become the updater without treating the interrupted DAT as
 /// successfully completed.
@@ -214,7 +214,8 @@ internal static class SharedDatLaunchGate
         SharedDatLaunchLease lease,
         Process process,
         NativeClientDddAccelerationInstallation installation,
-        Action<string>? report)
+        Action<string>? report,
+        Action? onDatSafe = null)
     {
         ArgumentNullException.ThrowIfNull(lease);
         ArgumentNullException.ThrowIfNull(process);
@@ -270,20 +271,18 @@ internal static class SharedDatLaunchGate
                         case NativeDatDrainState.Busy:
                             break;
 
-                        case NativeDatDrainState.DrainedAfterBusy:
+                        case NativeDatDrainState.ReadyForPromotion:
+                            // The A10 hook deliberately keeps OpeningUI
+                            // incomplete and freezes CLCache consumption while
+                            // the launcher promotes this slot's fully-drained DAT
+                            // pair back to the install seed.
+                            onDatSafe?.Invoke();
                             report?.Invoke(
-                                "Shared DAT update fully drained; another account slot may now launch.");
+                                "Private DAT update promoted to the shared seed; " +
+                                "another account slot may now launch.");
                             return;
 
-                        case NativeDatDrainState.IdleObserved:
-                            // Get_Download_Status only returns complete at this
-                            // point after CLCache is complete, its inbound queue
-                            // is empty, and both DAT writers report zero pending
-                            // writes. No update-needed logins therefore hand off
-                            // here without fabricating a busy transition.
-                            report?.Invoke(
-                                "Login DAT check completed with no pending writes; " +
-                                "another account slot may now launch.");
+                        case NativeDatDrainState.PromotionComplete:
                             return;
 
                         default:

@@ -61,7 +61,7 @@ internal sealed class ClientAntiTamperRuntimeGuard : IDisposable
     }
 
     internal string Detail =>
-        "A09 anti-tamper active (running-program identity, client-hook integrity, " +
+        "A10 anti-tamper active (running-program identity, client-hook integrity, " +
         "and client kill-on-launcher-exit containment; local only).";
 
     internal void VerifyNow() =>
@@ -341,7 +341,7 @@ internal static class ClientAntiTamper
                 EndClientForViolation(
                     clientProcess,
                     containment,
-                    $"The A09 integrity monitor failed: {error.Message}",
+                    $"The A10 integrity monitor failed: {error.Message}",
                     displayWarnings,
                     violationObserver);
             }
@@ -630,14 +630,14 @@ internal static class ClientAntiTamper
             if (displayWarnings)
             {
                 ShowWarning(
-                    "Aetherium Play ended its client.exe because the A09 anti-tamper " +
+                    "Aetherium Play ended its client.exe because the A10 anti-tamper " +
                     "check failed. No other program was stopped.\n\n" + reason);
             }
             return;
         }
 
         var failureNotice =
-            "The A09 anti-tamper check failed, but Windows did not confirm that " +
+            "The A10 anti-tamper check failed, but Windows did not confirm that " +
             "client.exe ended. Aetherium Play will remain active and keep trying; " +
             "close client.exe manually if it is still visible.\n\n" +
             reason + "\n\nTermination detail: " + endFailure;
@@ -767,7 +767,7 @@ internal static class ClientAntiTamper
             {
                 throw new Win32Exception(
                     Marshal.GetLastWin32Error(),
-                    "A09 could not attach client.exe to kill-on-close containment. " +
+                    "A10 could not attach client.exe to kill-on-close containment. " +
                     "An incompatible outer Windows job or unsupported Windows version may " +
                     "prevent containment; launch from the normal desktop. The client will " +
                     "not start without this protection");

@@ -51,7 +51,7 @@ required by the launcher.
 Linux players download `AetheriumPlay-linux.tar.gz` from the same GitHub
 Release, extract it, and run `AetheriumPlay.sh`. That script downloads a
 private Wine runtime, extracts Dark Majesty from the cabinets without the 2004
-wizard, and starts the same Windows launcher so A09 still runs. Players do not
+wizard, and starts the same Windows launcher so A10 still runs. Players do not
 install Wine themselves. This is not a native Linux client. Player steps:
 [`linux/README.md`](linux/README.md).
 
@@ -64,9 +64,10 @@ Launcher features:
 - Settings in `<install>\launcher.json` (fallback: `%LocalAppData%\AcLegacyLauncher\`)
 - Version 1.0.24 added hash-gated, process-local DDD acceleration. Current
   source recognizes the exact verified public client and the exact
-  Aetherium-keyed admin build. It leaves `client.exe`, `portal.dat`, and
-  `cell.dat` untouched by the launcher and fails before resume if any
-  runtime hook cannot be installed exactly.
+  Aetherium-keyed admin build. It leaves `client.exe` on disk untouched;
+  `portal.dat` and `cell.dat` are copied between a launcher-owned seed and
+  per-slot writable workspaces so live clients never share one DAT allocator.
+  Launch fails before resume if any runtime hook cannot be installed exactly.
 - Version 1.0.28 keeps the 1.0.27 launch path (global `TextRegion::SetText`
   stays stock) and skips unchanged number-panel rebuilds through
   `TextRegion::SetInt`, `StatRegion::SetInt`, `InfoBox::SetAvailable`, and
@@ -81,16 +82,21 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
+- Version 1.0.40 isolates each live account slot onto its own writable DAT
+  workspace. A10 holds the patch UI at a fully-drained boundary while the
+  launcher promotes the completed pair to the install seed, then the queued
+  slot clones that revision before connecting. The native slot DLL no longer
+  forces `FILE_SHARE_WRITE` on DAT files, and A09 launchers are rejected by
+  servers requiring the new A10 capability marker.
 - Version 1.0.38 clears the 1.0.36 display lock out of an existing
   `DgVoodoo.conf`. Fake fullscreen and the disabled Alt+Enter key are removed
   on the next Play, so resolution is no longer stuck at 800x600.
 - Version 1.0.37 undoes the 1.0.36 display lock. That build forced a
   desktop fullscreen window and disabled Alt+Enter, which stuck players at
   800x600. Resolution and Alt+Enter are left to the player.
-- Version 1.0.35 adds two account slots. Each keeps its own login, Red or
-  White choice, and settings. Both still launch from the install folder.
-  Retail Documents and the machine graphics key are not rewritten, and the
-  second client can read the shared world files while the first is open.
+- Version 1.0.35 added two account slots. Version 1.0.40 supersedes its
+  shared-writable-DAT behavior: the slots still share one install seed, but
+  each running client now gets a private writable DAT workspace.
 - Version 1.0.33 clears a saved 3D accelerator before Play. A `DirectDrawDevice`
   value that no longer enumerates makes `client.exe` exit before its window
   stays up. Setup deletes that value, and Play writes hardware fullscreen to
@@ -118,24 +124,24 @@ only in that process; the launcher does not patch the executable or DAT files
 on disk.
 
 When the server's launcher requirement is enabled, only a login carrying the
-exact A09 capability marker is admitted. An older launcher or direct start
+exact A10 capability marker is admitted. An older launcher or direct start
 receives the shipped client's native current-version rejection before
 authentication or DDD begins. This marker is an admission/version gate, not
 server-side proof that the public launcher or monitor is still present.
 
-### A09 anti-tamper disclosure
+### A10 anti-tamper disclosure
 
 Before launch, immediately after client resume, and every two seconds while the
 client runs, Aetherium Play checks the identity metadata of active programs for
 common Cheat Engine builds and verifies the exact client-memory regions
-installed by its own A09 patch. It reads active process/image names, exact
+installed by its own A10 patch. It reads active process/image names, exact
 top-level program titles, and version-resource identity. To read that version
 resource reliably, it resolves each active executable's full path and keeps a
 bounded in-memory cache keyed by process start and file metadata. Full paths are
 not logged or uploaded. It does not scan directories, enumerate arbitrary
 modules, upload a process list, or terminate another program.
 
-If Cheat Engine or an A09 patch change is detected, the launcher refuses to
+If Cheat Engine or an A10 patch change is detected, the launcher refuses to
 start or ends only the `client.exe` instance it launched. It writes the reason
 locally to `%LocalAppData%\AetheriumPlay\anti-tamper.log`; it does not
 automatically ban an account. The launcher monitor remains resident until the
@@ -147,7 +153,7 @@ client.
 The launcher stays visibly open while monitoring. Choosing **Exit** with a game
 running shows a warning; confirming Exit closes the contained client as well.
 
-A09 fails closed if Windows cannot assign the suspended client to that
+A10 fails closed if Windows cannot assign the suspended client to that
 kill-on-close job. Some sandboxed or otherwise job-constrained launcher hosts,
 and Windows versions without compatible nested-job behavior, can therefore be
 refused with an explicit containment error instead of launching unmonitored.

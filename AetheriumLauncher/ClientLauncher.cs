@@ -25,8 +25,6 @@ public sealed class ClientLaunchResult
 
 public static class ClientLauncher
 {
-    public const string LegacyMulticlientFolderName = "multiclient";
-
     public static ClientLaunchResult Start(
         LaunchConfig config,
         string? dgVoodooToolsDirectory = null,
@@ -41,10 +39,6 @@ public static class ClientLauncher
         ClientAntiTamper.EnsureNoKnownMemoryEditorRunning();
 
         RemoveLegacyProfileStore(report);
-        if (ShouldRemoveLegacyMulticlient(config))
-        {
-            RemoveLegacyMulticlientFolder(installDirectory, report);
-        }
 
         config.SyncSelectedSlotToLaunchFields();
         var safeGraphics = prepareGraphics && (WineRuntime.IsWine || config.SeedSafeGraphics);
@@ -56,14 +50,50 @@ public static class ClientLauncher
 
         var seededSafeGraphics = safeGraphics;
         string? graphicsDetail = null;
-        var workingDirectory = installDirectory;
+        var workspaceDirectory =
+            ClientDatWorkspace.GetWorkspaceDirectory(installDirectory, config.SelectedSlotId);
+
+        // Every live client gets a private writable DAT pair. The slot lease is
+        // held for the entire process lifetime, while the install seed lease
+        // serializes seed -> slot -> verified DDD -> seed promotion.
+        SharedDatLaunchLease? workspaceLease = null;
+        SharedDatLaunchLease? datLaunchLease = null;
+        ClientDatWorkspaceInfo datWorkspace;
+        try
+        {
+            workspaceLease =
+                SharedDatLaunchGate.AcquireWhenAvailable(workspaceDirectory, cancellationToken);
+            datLaunchLease =
+                SharedDatLaunchGate.AcquireWhenAvailable(installDirectory, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (prepareGraphics)
+            {
+                GraphicsBootstrap.EnsureDirectDrawWrapper(
+                    installDirectory,
+                    dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
+            }
+
+            datWorkspace = ClientDatWorkspace.PrepareFromSeed(
+                installDirectory,
+                config.SelectedSlotId,
+                report);
+        }
+        catch
+        {
+            datLaunchLease?.Dispose();
+            workspaceLease?.Dispose();
+            throw;
+        }
+
+        var workingDirectory = datWorkspace.WorkingDirectory;
+        clientPath = datWorkspace.ClientExePath;
 
         if (prepareGraphics)
         {
             GraphicsBootstrap.EnsureDirectDrawWrapper(
-                installDirectory,
+                workingDirectory,
                 dgVoodooToolsDirectory ?? GetRepositoryToolsDirectory());
-
             GraphicsBootstrap.RestoreDisplayModeBefore136(workingDirectory);
             if (config.AnotherClientRunning)
             {
@@ -73,19 +103,16 @@ public static class ClientLauncher
             graphicsDetail = WineRuntime.IsWine
                 ? "Wine DirectDraw (dgVoodoo skipped)."
                 : config.AnotherClientRunning
-                    ? "Second client: CaptureMouse=false."
-                    : "Slot display is private; dgVoodoo mouse capture was left unchanged.";
+                    ? "Second client: private DAT workspace; CaptureMouse=false."
+                    : "Private DAT workspace; slot display settings are isolated.";
         }
 
         var argumentParts = BuildArgumentParts(config);
         var arguments = BuildArgumentString(argumentParts);
 
         // Suspend → slot isolation → optional vintage Decal inject → resume.
-        // Isolation is an injected DLL. client.exe, portal.dat, and cell.dat stay shared.
-        // Only one client using this install may enter the login-time shared DAT
-        // transaction at once.
-        SharedDatLaunchLease? datLaunchLease =
-            SharedDatLaunchGate.AcquireWhenAvailable(installDirectory, cancellationToken);
+        // portal.dat/cell.dat are private to this slot; the install-root pair is
+        // never opened by a live client and is only the serialized seed.
         Process process;
         IntPtr processHandle;
         IntPtr threadHandle;
@@ -102,7 +129,8 @@ public static class ClientLauncher
         }
         catch
         {
-            datLaunchLease.Dispose();
+            datLaunchLease?.Dispose();
+            workspaceLease?.Dispose();
             throw;
         }
 
@@ -114,7 +142,7 @@ public static class ClientLauncher
         var vintageDecalDetail = string.Empty;
         try
         {
-            // Contain the suspended stock client before any A09 marker, hook, or
+            // Contain the suspended stock client before any A10 marker, hook, or
             // optional injection is written. If the launcher ends at any later
             // point, Windows cannot leave a patched orphan to be resumed.
             containment = ClientAntiTamper.CreateRuntimeContainment(processHandle);
@@ -147,7 +175,7 @@ public static class ClientLauncher
                 vintageDecalDetail = "Injected vintage Decal 2.6.1.1 before client resume.";
             }
 
-            // Optional DLL injection must leave all guarded A09 regions
+            // Optional DLL injection must leave all guarded A10 regions
             // intact. Any collision is refused while the client is suspended.
             NativeClientDddAcceleration.VerifyInstalled(
                 processHandle,
@@ -159,7 +187,7 @@ public static class ClientLauncher
             ClientAntiTamper.EnsureNoKnownMemoryEditorRunning();
 
             // Start the independent launcher-resident guard while the primary
-            // client thread is still suspended, so no admitted A09 client ever
+            // client thread is still suspended, so no admitted A10 client ever
             // runs without an active integrity monitor.
             antiTamper = ClientAntiTamper.StartRuntimeMonitor(
                 process,
@@ -174,19 +202,58 @@ public static class ClientLauncher
             // the resident thread then continues scan-before-wait every two seconds.
             antiTamper.VerifyNow();
 
-            // Transfer the lease to a background monitor. It is released only
-            // after the A09 completion hook proves the login DAT transaction is
-            // fully drained (or the client exits/crashes).
+            // Keep the slot's private DAT mutex for the process lifetime.
+            // The seed mutex is released only after A10 freezes CLCache at a
+            // fully-drained boundary, the private DAT pair is atomically
+            // promoted to the install seed, and the launcher acknowledges that
+            // promotion back to the client.
+            SharedDatLaunchGate.ReleaseWhenProcessExits(
+                workspaceLease!,
+                process,
+                report);
+            workspaceLease = null;
+
             SharedDatLaunchGate.ReleaseWhenClientDatSafe(
-                datLaunchLease,
+                datLaunchLease!,
                 process,
                 dddAcceleration,
-                report);
+                report,
+                onDatSafe: () =>
+                {
+                    try
+                    {
+                        ClientDatWorkspace.PromoteToSeed(
+                            workingDirectory,
+                            installDirectory,
+                            report);
+                        NativeClientDddAcceleration.MarkDatPromotionComplete(
+                            process.Handle,
+                            dddAcceleration);
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if (!process.HasExited)
+                            {
+                                process.Kill();
+                            }
+                        }
+                        catch
+                        {
+                            // The DAT seed was not acknowledged; fail closed and
+                            // let the mutex remain owned until process exit.
+                        }
+
+                        throw;
+                    }
+                });
             datLaunchLease = null;
         }
         catch
         {
             datLaunchLease?.Dispose();
+            workspaceLease?.Dispose();
             if (antiTamper is not null)
             {
                 antiTamper.Dispose();
@@ -263,12 +330,6 @@ public static class ClientLauncher
 
     internal static NativeClientDddAccelerationProfile ValidateForLaunch(LaunchConfig config) =>
         ResolveValidatedLaunchTarget(config).Profile;
-
-    internal static bool ShouldRemoveLegacyMulticlient(LaunchConfig config)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        return !config.PreserveLegacyMulticlient;
-    }
 
     private static (
         string InstallDirectory,
@@ -413,33 +474,4 @@ public static class ClientLauncher
         }
     }
 
-    /// <summary>
-    /// Older dual-client builds copied portal/cell DATs under multiclient\{account}.
-    /// Those private copies are the main reason players keep redoing DDD updates.
-    /// </summary>
-    public static void RemoveLegacyMulticlientFolder(string installDirectory, Action<string>? report = null)
-    {
-        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
-        {
-            return;
-        }
-
-        var multiclientRoot = Path.Combine(installDirectory, LegacyMulticlientFolderName);
-        if (!Directory.Exists(multiclientRoot))
-        {
-            return;
-        }
-
-        try
-        {
-            report?.Invoke($"Removing legacy multiclient folder: {multiclientRoot}");
-            Directory.Delete(multiclientRoot, recursive: true);
-            report?.Invoke("Removed legacy multiclient DAT workspaces.");
-        }
-        catch (Exception ex)
-        {
-            report?.Invoke(
-                $"Could not remove {multiclientRoot} (close any old client windows and retry): {ex.Message}");
-        }
-    }
 }

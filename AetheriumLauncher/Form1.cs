@@ -1165,7 +1165,7 @@ public partial class Form1 : Form
             "The client always launches from your install folder so DAT updates stay in one place.\n" +
             "Two account slots keep separate logins, Red/White, and game settings.\n" +
             "We do not rewrite existing Documents\\Asheron's Call\\UserPreferences.ini.\n" +
-            "A09 checks active program identity locally and verifies its own client hooks while the game runs.\n" +
+            "A10 checks active program identity locally and verifies its own client hooks while the game runs.\n" +
             "It resolves active executable paths only for version identity; paths stay local and are not logged.\n" +
             "It does not scan directories, upload a process list, or stop another program.\n" +
             "Forcibly ending the launcher also ends its monitored client.\n" +
@@ -1392,7 +1392,6 @@ public partial class Form1 : Form
                 CopySlot(slotTwo),
             ],
             SelectedSlotId = selectedSlotId,
-            PreserveLegacyMulticlient = startupInstallDirectory is not null,
             AnotherClientRunning = IsAnotherSlotRunning(selectedSlotId),
         };
     }
@@ -1477,11 +1476,6 @@ public partial class Form1 : Form
         }
 
         ClientLauncher.RemoveLegacyProfileStore();
-        var installDirectory = GetInstallDirectory();
-        if (startupInstallDirectory is null && installDirectory is not null)
-        {
-            ClientLauncher.RemoveLegacyMulticlientFolder(installDirectory);
-        }
     }
 
     private void ApplyLauncherIniDefaults()
