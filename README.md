@@ -82,6 +82,9 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
+- Version 1.0.41 saves the slot `portal.dat` / `cell.dat` back to the install
+  seed when the game exits. v1.0.40 left the patched files in the private slot,
+  so the next Play cloned the old seed and repeated the login repair.
 - Version 1.0.40 isolates each live account slot onto its own writable DAT
   workspace. A10 holds the patch UI at a fully-drained boundary while the
   launcher promotes the completed pair to the install seed, then the queued

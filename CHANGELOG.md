@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.41 - 2026-09-28
+
+### Fixed
+
+- Closing the game saves that session's `portal.dat` / `cell.dat` back to the
+  install seed. v1.0.40 kept the patched files only in the private slot, so
+  the next Play cloned the old seed and downloaded the same login repair again.
+
 ## 1.0.40 - 2026-09-28
 
 ### Fixed

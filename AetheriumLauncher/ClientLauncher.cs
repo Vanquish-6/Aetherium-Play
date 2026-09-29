@@ -220,12 +220,20 @@ public static class ClientLauncher
                 report,
                 onDatSafe: () =>
                 {
+                    ClientDatWorkspace.PromoteToSeed(
+                        workingDirectory,
+                        installDirectory,
+                        report);
+                    process.Refresh();
+                    if (process.HasExited)
+                    {
+                        // The files are closed and flushed. There is no live
+                        // client left to acknowledge the promotion.
+                        return;
+                    }
+
                     try
                     {
-                        ClientDatWorkspace.PromoteToSeed(
-                            workingDirectory,
-                            installDirectory,
-                            report);
                         NativeClientDddAcceleration.MarkDatPromotionComplete(
                             process.Handle,
                             dddAcceleration);

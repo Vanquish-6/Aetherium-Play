@@ -238,9 +238,25 @@ internal static class SharedDatLaunchGate
                     process.Refresh();
                     if (process.HasExited)
                     {
-                        report?.Invoke(
-                            "Shared DAT update owner exited before/after completion; " +
-                            "the next client will re-check/repair the DAT normally.");
+                        // The patched files live only in the slot workspace. If the
+                        // process ends before the drained-state handoff, or after
+                        // further world writes, keep that pair as the next seed.
+                        // Leaving the pre-session seed in place makes the next
+                        // Play request the same login repair again.
+                        try
+                        {
+                            onDatSafe?.Invoke();
+                            report?.Invoke(
+                                "Client exited; the slot DAT pair was saved to the install seed.");
+                        }
+                        catch (Exception error)
+                        {
+                            report?.Invoke(
+                                "Client exited before the slot DAT pair could be saved to the " +
+                                "install seed. The next Play will repair from the previous seed. " +
+                                error.Message);
+                        }
+
                         return;
                     }
 
