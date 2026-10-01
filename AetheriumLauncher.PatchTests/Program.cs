@@ -1723,10 +1723,38 @@ var startupLinkDirectory = startupTestDirectory + "-link";
 Directory.CreateDirectory(startupTestDirectory);
 try
 {
-    foreach (var fileName in new[] { "client.exe", "portal.dat", "cell.dat" })
+    foreach (var fileName in new[] { "client.exe", "portal.dat", "cell.dat" }
+                 .Concat(GameInstallLayout.RequiredClientLibraries))
     {
         File.WriteAllBytes(Path.Combine(startupTestDirectory, fileName), [0x01]);
     }
+
+    var missingRuntimePath = Path.Combine(startupTestDirectory, "msvcp70.dll");
+    File.Delete(missingRuntimePath);
+    if (!File.Exists(Path.Combine(Environment.SystemDirectory, "msvcp70.dll")))
+    {
+        var missingRuntimeRejected = false;
+        try
+        {
+            _ = LauncherStartupOptions.Parse(
+                ["--game-install", startupTestDirectory],
+                _ => publicProfile);
+        }
+        catch (InvalidDataException error) when (error.Message.Contains("msvcp70.dll"))
+        {
+            missingRuntimeRejected = true;
+        }
+
+        True(missingRuntimeRejected, "game folder without the VC7 runtime is rejected by name");
+        True(!GameInstallLayout.IsComplete(startupTestDirectory),
+            "incomplete game folder is not offered by Browse");
+    }
+
+    File.WriteAllBytes(missingRuntimePath, [0x01]);
+    Equal(
+        startupTestDirectory,
+        GameInstallLayout.FindCompleteInstallUnder(startupTestDirectory) ?? string.Empty,
+        "complete game folder is accepted by Browse");
 
     var resolvedClientPath = string.Empty;
     var explicitStartupOptions = LauncherStartupOptions.Parse(
@@ -1982,21 +2010,39 @@ if (args is ["--prepare-release-client", var releaseClientDirectory])
 {
     var fullDirectory = Path.GetFullPath(releaseClientDirectory);
     Directory.CreateDirectory(fullDirectory);
-    foreach (var datName in new[] { "cell.dat", "portal.dat" })
+    var placeholderLibraries = new List<string>();
+    foreach (var placeholderName in GameInstallLayout.RequiredDataFiles
+                 .Concat(GameInstallLayout.RequiredClientLibraries))
     {
-        var datPath = Path.Combine(fullDirectory, datName);
-        if (!File.Exists(datPath))
+        var placeholderPath = Path.Combine(fullDirectory, placeholderName);
+        if (!File.Exists(placeholderPath) || new FileInfo(placeholderPath).Length == 0)
         {
-            File.WriteAllBytes(datPath, []);
+            File.WriteAllBytes(placeholderPath, [0x00]);
+            if (placeholderName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            {
+                placeholderLibraries.Add(placeholderPath);
+            }
         }
     }
 
-    CommunityClientBootstrap.InstallFromCommunityAsync(fullDirectory)
-        .GetAwaiter()
-        .GetResult();
-    CommunityClientBootstrap.VerifyInstalledClientAsync(fullDirectory)
-        .GetAwaiter()
-        .GetResult();
+    try
+    {
+        CommunityClientBootstrap.InstallFromCommunityAsync(fullDirectory)
+            .GetAwaiter()
+            .GetResult();
+        CommunityClientBootstrap.VerifyInstalledClientAsync(fullDirectory)
+            .GetAwaiter()
+            .GetResult();
+    }
+    finally
+    {
+        // A one-byte stand-in must never sit beside a real client.exe that a
+        // later integration step might resume.
+        foreach (var placeholderPath in placeholderLibraries)
+        {
+            File.Delete(placeholderPath);
+        }
+    }
     Console.WriteLine(
         $"PASS: downloaded and hash-verified release integration client at {fullDirectory}.");
 }

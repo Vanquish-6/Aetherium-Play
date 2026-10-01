@@ -13,13 +13,7 @@ internal static class AetheriumInstallationConfiguration
     public static void Configure(string gameInstallDirectory, string? skinName = null)
     {
         var fullGameDirectory = Path.GetFullPath(gameInstallDirectory);
-        if (!File.Exists(Path.Combine(fullGameDirectory, "client.exe")) ||
-            !File.Exists(Path.Combine(fullGameDirectory, "portal.dat")) ||
-            !File.Exists(Path.Combine(fullGameDirectory, "cell.dat")))
-        {
-            throw new InvalidDataException(
-                $"The selected game directory is incomplete: {fullGameDirectory}");
-        }
+        GameInstallLayout.EnsureComplete(fullGameDirectory);
 
         File.WriteAllText(
             Path.Combine(AppContext.BaseDirectory, GamePathMarkerFileName),

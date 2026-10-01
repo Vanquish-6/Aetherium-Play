@@ -82,6 +82,10 @@ Launcher features:
   per second, so every tick still ran `ClearAllText`. Same-length ticks poke
   existing glyphs; `9:59` to `10:00` still uses stock `SetText`. MEGA downloads
   request HTTPS storage URLs and retry a dead host.
+- Version 1.0.42 refuses incomplete game folders with a message naming the
+  missing files. `client.exe` also needs `ACmvhlp.dll`, `msvcp70.dll`,
+  `msvcr70.dll`, and `msvci70.dll` beside it; a folder with only the exe and
+  DATs used to fail at Play with "MSVCP70.dll was not found".
 - Version 1.0.41 saves the slot `portal.dat` / `cell.dat` back to the install
   seed when the game exits. v1.0.40 left the patched files in the private slot,
   so the next Play cloned the old seed and repeated the login repair.

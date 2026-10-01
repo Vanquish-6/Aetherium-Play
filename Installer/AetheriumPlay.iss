@@ -128,18 +128,66 @@ begin
     True);
 end;
 
-function IsCompleteGameDirectory(const DirectoryName: string): Boolean;
+// Keep in sync with AetheriumLauncher\GameInstallLayout.cs. client.exe
+// imports the DLLs by name; Windows finds them beside client.exe or in the
+// 32-bit system folder, and refuses to start the game if any is absent.
+const
+  RequiredGameFiles = 'client.exe,portal.dat,cell.dat';
+  RequiredClientLibraries = 'ACmvhlp.dll,msvcp70.dll,msvcr70.dll,msvci70.dll';
+
+function HasNonEmptyFile(const PathName: string): Boolean;
 var
-  Root: string;
+  Size: Int64;
+begin
+  Result := FileExists(PathName) and FileSize64(PathName, Size) and (Size > 0);
+end;
+
+function NextListItem(var List: string): string;
+var
+  Separator: Integer;
+begin
+  Separator := Pos(',', List);
+  if Separator = 0 then
+  begin
+    Result := List;
+    List := '';
+  end
+  else
+  begin
+    Result := Copy(List, 1, Separator - 1);
+    Delete(List, 1, Separator);
+  end;
+end;
+
+function ListMissingGameFiles(const Root: string): string;
+var
+  Pending, Name: string;
+begin
+  Result := '';
+  Pending := RequiredGameFiles;
+  while Pending <> '' do
+  begin
+    Name := NextListItem(Pending);
+    if not HasNonEmptyFile(AddBackslash(Root) + Name) then
+      Result := Result + ' ' + Name;
+  end;
+
+  Pending := RequiredClientLibraries;
+  while Pending <> '' do
+  begin
+    Name := NextListItem(Pending);
+    if not HasNonEmptyFile(AddBackslash(Root) + Name) and
+       not HasNonEmptyFile(AddBackslash(ExpandConstant('{sys}')) + Name) then
+      Result := Result + ' ' + Name;
+  end;
+end;
+
+function IsCompleteGameDirectory(const DirectoryName: string): Boolean;
 begin
   Result := False;
   if DirectoryName = '' then
     Exit;
-  Root := RemoveBackslashUnlessRoot(DirectoryName);
-  Result :=
-    FileExists(AddBackslash(Root) + 'client.exe') and
-    FileExists(AddBackslash(Root) + 'portal.dat') and
-    FileExists(AddBackslash(Root) + 'cell.dat');
+  Result := ListMissingGameFiles(RemoveBackslashUnlessRoot(DirectoryName)) = '';
 end;
 
 function DescribeMissingGameFiles(const DirectoryName: string): string;
@@ -153,17 +201,11 @@ begin
   end;
 
   Root := RemoveBackslashUnlessRoot(DirectoryName);
-  Missing := '';
-  if not FileExists(AddBackslash(Root) + 'client.exe') then
-    Missing := Missing + ' client.exe';
-  if not FileExists(AddBackslash(Root) + 'portal.dat') then
-    Missing := Missing + ' portal.dat';
-  if not FileExists(AddBackslash(Root) + 'cell.dat') then
-    Missing := Missing + ' cell.dat';
+  Missing := ListMissingGameFiles(Root);
   if Missing = '' then
     Result := 'folder is complete'
   else
-    Result := 'missing' + Missing + ' in ' + Root;
+    Result := 'Missing:' + Missing + #13#10 + 'In: ' + Root;
 end;
 
 function IsCompleteGameDirectoryOrDefault(const DirectoryName: string; var FoundDir: string): Boolean;
@@ -706,7 +748,7 @@ begin
   while True do
   begin
     if not BrowseForFolder(
-      'Select the Dark Majesty game folder (client.exe, portal.dat, and cell.dat). ' +
+      'Select the Dark Majesty game folder (client.exe, portal.dat, cell.dat, and msvcp70.dll). ' +
       'Usually C:\Turbine\Asheron''s Call, not the Aetherium Play folder.',
       SelectedDirectory,
       False) then
@@ -745,7 +787,9 @@ begin
     MsgBox(
       'That folder is not a complete Dark Majesty install.' + #13#10 + #13#10 +
       DescribeMissingGameFiles(SelectedDirectory) + #13#10 + #13#10 +
-      'The original installer usually creates C:\Turbine\Asheron''s Call.',
+      'Pick the folder the original Dark Majesty installer put the game in ' +
+      '(usually C:\Turbine\Asheron''s Call). Copying only client.exe and the .dat ' +
+      'files is not enough. Click Cancel to run the original installer again.',
       mbError,
       MB_OK);
   end;

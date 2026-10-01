@@ -60,6 +60,7 @@ internal sealed class LauncherStartupOptions
         var clientPath = EnsurePhysicalFile(fullDirectory, "client.exe", requireNonEmpty: true);
         _ = EnsurePhysicalFile(fullDirectory, "portal.dat", requireNonEmpty: true);
         _ = EnsurePhysicalFile(fullDirectory, "cell.dat", requireNonEmpty: true);
+        GameInstallLayout.EnsureComplete(fullDirectory);
         var clientProfile = resolveClientProfile(clientPath);
 
         return new LauncherStartupOptions(fullDirectory, clientProfile);

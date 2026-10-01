@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.42 - 2026-09-30
+
+### Fixed
+
+- Incomplete game folders are rejected everywhere instead of failing at Play
+  with "MSVCP70.dll was not found". The installers, Browse, folder
+  auto-detect, `--game-install`, and Play all require `client.exe`,
+  `portal.dat`, `cell.dat`, `ACmvhlp.dll`, `msvcp70.dll`, `msvcr70.dll`, and
+  `msvci70.dll` (the DLLs may also come from the 32-bit system folder). The
+  message names the missing files and, when a complete install exists
+  elsewhere, shows where it is.
+- Browse accepts a parent folder such as `C:\Turbine` and selects the complete
+  game folder inside it.
+
 ## 1.0.41 - 2026-09-28
 
 ### Fixed

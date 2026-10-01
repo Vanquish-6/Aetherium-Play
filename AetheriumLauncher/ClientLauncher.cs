@@ -345,15 +345,22 @@ public static class ClientLauncher
         NativeClientDddAccelerationProfile Profile) ResolveValidatedLaunchTarget(LaunchConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        var installDirectory = ResolveInstallDirectory(config.InstallPath)
-            ?? throw new InvalidOperationException(
-                "Install folder must point to a directory containing client.exe.");
-
-        var clientPath = Path.Combine(installDirectory, "client.exe");
-        if (!File.Exists(clientPath))
+        var installDirectory = ResolveInstallDirectory(config.InstallPath);
+        if (installDirectory is null)
         {
-            throw new FileNotFoundException($"Missing client.exe in {installDirectory}", clientPath);
+            var requested = config.InstallPath?.Trim() ?? string.Empty;
+            if (Directory.Exists(requested))
+            {
+                GameInstallLayout.EnsureComplete(requested);
+            }
+
+            throw new InvalidDataException(GameInstallLayout.DescribeIncomplete(
+                string.IsNullOrWhiteSpace(requested) ? "(no folder selected)" : requested,
+                [GameInstallLayout.ClientFileName]));
         }
+
+        GameInstallLayout.EnsureComplete(installDirectory);
+        var clientPath = Path.Combine(installDirectory, GameInstallLayout.ClientFileName);
 
         if (string.IsNullOrWhiteSpace(config.TicketKey))
         {

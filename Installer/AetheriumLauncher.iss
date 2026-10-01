@@ -140,6 +140,65 @@ begin
   end;
 end;
 
+// Keep in sync with AetheriumLauncher\GameInstallLayout.cs. client.exe
+// imports the DLLs by name; Windows finds them beside client.exe or in the
+// 32-bit system folder, and refuses to start the game if any is absent.
+const
+  RequiredGameFiles = 'client.exe,portal.dat,cell.dat';
+  RequiredClientLibraries = 'ACmvhlp.dll,msvcp70.dll,msvcr70.dll,msvci70.dll';
+
+function HasNonEmptyFile(const PathName: string): Boolean;
+var
+  Size: Int64;
+begin
+  Result := FileExists(PathName) and FileSize64(PathName, Size) and (Size > 0);
+end;
+
+function NextListItem(var List: string): string;
+var
+  Separator: Integer;
+begin
+  Separator := Pos(',', List);
+  if Separator = 0 then
+  begin
+    Result := List;
+    List := '';
+  end
+  else
+  begin
+    Result := Copy(List, 1, Separator - 1);
+    Delete(List, 1, Separator);
+  end;
+end;
+
+function ListMissingGameFiles(const Root: string): string;
+var
+  Pending, Name: string;
+begin
+  Result := '';
+  Pending := RequiredGameFiles;
+  while Pending <> '' do
+  begin
+    Name := NextListItem(Pending);
+    if not HasNonEmptyFile(AddBackslash(Root) + Name) then
+      Result := Result + ' ' + Name;
+  end;
+
+  Pending := RequiredClientLibraries;
+  while Pending <> '' do
+  begin
+    Name := NextListItem(Pending);
+    if not HasNonEmptyFile(AddBackslash(Root) + Name) and
+       not HasNonEmptyFile(AddBackslash(ExpandConstant('{syswow64}')) + Name) then
+      Result := Result + ' ' + Name;
+  end;
+end;
+
+function IsCompleteGameDirectory(const DirectoryName: string): Boolean;
+begin
+  Result := (DirectoryName <> '') and (ListMissingGameFiles(DirectoryName) = '');
+end;
+
 // If the selected folder itself doesn't have client.exe, check one level
 // down - handles picking the parent folder (e.g. "Turbine Entertainment
 // Software" instead of "...\Asheron's Call"). We deliberately find the real
@@ -162,7 +221,7 @@ begin
            (FindRec.Name <> '.') and (FindRec.Name <> '..') then
         begin
           Candidate := AddBackslash(BaseDir) + FindRec.Name;
-          if FileExists(AddBackslash(Candidate) + 'client.exe') then
+          if IsCompleteGameDirectory(Candidate) then
           begin
             FoundDir := Candidate;
             Result := True;
@@ -231,7 +290,7 @@ begin
       if RegQueryStringValue(HKLM, KeyPath, 'InstallLocation', InstallLocation) then
       begin
         Candidate := Trim(InstallLocation);
-        if (Candidate <> '') and FileExists(AddBackslash(Candidate) + 'client.exe') then
+        if IsCompleteGameDirectory(Candidate) then
         begin
           FoundDir := Candidate;
           Result := True;
@@ -242,7 +301,7 @@ begin
       if RegQueryStringValue(HKLM, KeyPath, 'UninstallString', UninstallString) then
       begin
         Candidate := ExtractFileDir(CleanUninstallString(UninstallString));
-        if (Candidate <> '') and FileExists(AddBackslash(Candidate) + 'client.exe') then
+        if IsCompleteGameDirectory(Candidate) then
         begin
           FoundDir := Candidate;
           Result := True;
@@ -288,7 +347,8 @@ begin
           try
             Shell := CreateOleObject('WScript.Shell');
             TargetPath := Shell.CreateShortcut(ShortcutPath).TargetPath;
-            if (Lowercase(ExtractFileName(TargetPath)) = 'client.exe') and FileExists(TargetPath) then
+            if (Lowercase(ExtractFileName(TargetPath)) = 'client.exe') and
+               IsCompleteGameDirectory(ExtractFileDir(TargetPath)) then
             begin
               FoundDir := ExtractFileDir(TargetPath);
               Result := True;
@@ -351,14 +411,13 @@ end;
 // chosen folder actually looks like a real AC install.
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  ChosenDir, ClientPath, SubDir: string;
+  ChosenDir, SubDir: string;
 begin
   Result := True;
   if CurPageID = wpSelectDir then
   begin
     ChosenDir := WizardDirValue;
-    ClientPath := AddBackslash(ChosenDir) + 'client.exe';
-    if FileExists(ClientPath) then
+    if IsCompleteGameDirectory(ChosenDir) then
       Exit;
 
     // Picked the parent folder by mistake? Auto-correct down into it.
@@ -377,12 +436,15 @@ begin
     end;
 
     MsgBox(
-      'This folder does not contain client.exe, and no subfolder of it does ' +
-      'either.' + #13#10 + #13#10 + 'Checked: ' + ClientPath + #13#10 + #13#10 +
-      'Aetherium Launcher needs to be installed into your existing Asheron''s Call ' +
-      'game folder (the one with client.exe in it - usually C:\Turbine ' +
-      'Entertainment Software\Asheron''s Call).' + #13#10 + #13#10 + 'Please click ' +
-      'Browse and pick that folder (or its parent folder) and try again.', mbError, MB_OK);
+      'This folder is not a complete Asheron''s Call: Dark Majesty install, and ' +
+      'no subfolder of it is either.' + #13#10 + #13#10 +
+      'Missing:' + ListMissingGameFiles(ChosenDir) + #13#10 +
+      'In: ' + ChosenDir + #13#10 + #13#10 +
+      'Aetherium Launcher needs to be installed into the folder the original ' +
+      'Dark Majesty installer put the game in (usually C:\Turbine\Asheron''s Call). ' +
+      'Copying only client.exe and the .dat files is not enough.' + #13#10 + #13#10 +
+      'Please click Browse and pick that folder (or its parent folder), or run the ' +
+      'original Dark Majesty installer again.', mbError, MB_OK);
     Result := False;
   end;
 end;

@@ -1204,7 +1204,7 @@ public partial class Form1 : Form
 
         using var dialog = new FolderBrowserDialog
         {
-            Description = "Choose the folder containing client.exe",
+            Description = "Choose your Asheron's Call: Dark Majesty game folder",
             ShowNewFolderButton = false,
         };
 
@@ -1213,10 +1213,26 @@ public partial class Form1 : Form
             dialog.InitialDirectory = installPathTextBox.Text;
         }
 
-        if (dialog.ShowDialog(this) == DialogResult.OK)
+        if (dialog.ShowDialog(this) != DialogResult.OK)
         {
-            installPathTextBox.Text = dialog.SelectedPath;
+            return;
         }
+
+        var complete = GameInstallLayout.FindCompleteInstallUnder(dialog.SelectedPath);
+        if (complete is null)
+        {
+            MessageBox.Show(
+                this,
+                GameInstallLayout.DescribeIncomplete(
+                    dialog.SelectedPath,
+                    GameInstallLayout.FindMissingFiles(dialog.SelectedPath)),
+                LauncherName,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        installPathTextBox.Text = complete;
     }
 
     private void Form1_KeyDown(object? sender, KeyEventArgs e)
@@ -1588,64 +1604,8 @@ public partial class Form1 : Form
         yield return Path.Combine(LegacyConfigDirectory, LegacyConfigFileName);
     }
 
-    private static string? FindDefaultInstallDirectory()
-    {
-        var configuredDirectory = AetheriumInstallationConfiguration.TryReadGameInstallDirectory();
-        if (configuredDirectory is not null)
-        {
-            return configuredDirectory;
-        }
-
-        var directCandidates = new[]
-        {
-            LaunchConfig.DefaultInstallPath,
-            @"C:\Turbine\Asheron's Call",
-            @"C:\Program Files (x86)\Turbine\Asheron's Call",
-            @"C:\Program Files\Turbine\Asheron's Call",
-            @"C:\Turbine Entertainment Software\Asheron's Call",
-            @"C:\Program Files (x86)\Turbine Entertainment Software\Asheron's Call",
-            @"C:\Program Files\Turbine Entertainment Software\Asheron's Call",
-        };
-
-        var direct = directCandidates.FirstOrDefault(candidate => File.Exists(Path.Combine(candidate, "client.exe")));
-        if (direct is not null)
-        {
-            return direct;
-        }
-
-        // Fall back to scanning known publisher folders for whatever the actual
-        // game subfolder is named. Different AC releases/locales can spell
-        // "Asheron's Call" with a different apostrophe character, which would
-        // silently miss the hardcoded candidates above even though the real
-        // install folder is right there.
-        var parentCandidates = new[]
-        {
-            @"C:\Turbine",
-            @"C:\Turbine Entertainment Software",
-            @"C:\Program Files\Turbine",
-            @"C:\Program Files (x86)\Turbine",
-            @"C:\Program Files\Turbine Entertainment Software",
-            @"C:\Program Files (x86)\Turbine Entertainment Software",
-        };
-
-        foreach (var parent in parentCandidates)
-        {
-            if (!Directory.Exists(parent))
-            {
-                continue;
-            }
-
-            foreach (var subDir in Directory.EnumerateDirectories(parent))
-            {
-                if (File.Exists(Path.Combine(subDir, "client.exe")))
-                {
-                    return subDir;
-                }
-            }
-        }
-
-        return null;
-    }
+    private static string? FindDefaultInstallDirectory() =>
+        GameInstallLayout.FindDefaultInstallDirectory();
 
     private static GraphicsPath CreateRoundedPath(Rectangle bounds, int radius)
     {

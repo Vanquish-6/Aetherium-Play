@@ -291,16 +291,9 @@ internal static class CommunityClientBootstrap
                 $"The Asheron's Call install directory does not exist: {fullInstallDirectory}");
         }
 
-        var missingDats = new[] { "cell.dat", "portal.dat" }
-            .Where(fileName => !File.Exists(Path.Combine(fullInstallDirectory, fileName)))
-            .ToArray();
-        if (missingDats.Length != 0)
-        {
-            throw new InvalidDataException(
-                $"The selected folder is not a complete client install. Missing: " +
-                string.Join(", ", missingDats));
-        }
-
+        // client.exe is replaced by this bootstrap, so only the files the
+        // Dark Majesty installer must already have placed are required here.
+        GameInstallLayout.EnsureComplete(fullInstallDirectory, includeClient: false);
         return Path.Combine(fullInstallDirectory, ClientFileName);
     }
 
