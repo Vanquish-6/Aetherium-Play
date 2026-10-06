@@ -80,6 +80,8 @@ public partial class Form1 : Form
     private readonly TextBox usernameTextBox = new();
     private readonly TextBox hostTextBox = new();
     private readonly ServerChoiceBar serverChoice = new();
+    private readonly WorldStatusBar worldStatus = new();
+    private readonly System.Windows.Forms.Timer worldStatusTimer = new() { Interval = 15_000 };
     private readonly TextBox passwordTextBox = new();
     private readonly TextBox zoneKeyTextBox = new();
     private readonly InkToggle useNoDisplayModeCheckBox = new();
@@ -121,6 +123,7 @@ public partial class Form1 : Form
     private float currentOverlayScale = 1f;
     private bool currentCompactOverlay;
     private string currentSkin = DefaultSkinName;
+    private bool worldStatusRefreshInFlight;
 
     public Form1()
         : this(null)
@@ -137,15 +140,45 @@ public partial class Form1 : Form
             installPathTextBox.ReadOnly = true;
         }
         LoadConfigIntoControls();
+        worldStatusTimer.Tick += WorldStatusTimer_Tick;
         Shown += Form1_Shown;
     }
 
     private async void Form1_Shown(object? sender, EventArgs e)
     {
         Shown -= Form1_Shown;
+        worldStatusTimer.Start();
+        _ = RefreshWorldStatusAsync();
         await UpdateChecker.CheckForUpdatesAsync(
             this,
             interactive: false);
+    }
+
+    private async void WorldStatusTimer_Tick(object? sender, EventArgs e)
+    {
+        await RefreshWorldStatusAsync();
+    }
+
+    private async Task RefreshWorldStatusAsync()
+    {
+        if (worldStatusRefreshInFlight || IsDisposed || Disposing)
+        {
+            return;
+        }
+
+        worldStatusRefreshInFlight = true;
+        try
+        {
+            var snapshot = await ServerStatusService.GetAsync();
+            if (!IsDisposed && !Disposing)
+            {
+                worldStatus.SetSnapshot(snapshot);
+            }
+        }
+        finally
+        {
+            worldStatusRefreshInFlight = false;
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -179,6 +212,8 @@ public partial class Form1 : Form
             }
         }
 
+        worldStatusTimer.Stop();
+        worldStatusTimer.Dispose();
         launchCancellation.Cancel();
 
         foreach (var slot in running)
@@ -393,8 +428,20 @@ public partial class Form1 : Form
         layout.Controls.Add(CreateFieldRow("Account", WrapLedger(usernameTextBox)));
         layout.Controls.Add(CreateFieldRow("Password", WrapLedger(passwordTextBox)));
         layout.Controls.Add(CreateFieldRow("Host", WrapLedger(hostTextBox)));
-        layout.Controls.Add(CreateFieldRow("Server", serverChoice));
-        serverChoice.Dock = DockStyle.Left;
+        var serverRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Color.Transparent,
+        };
+        serverRow.Controls.Add(serverChoice);
+        serverRow.Controls.Add(worldStatus);
+        layout.Controls.Add(CreateFieldRow("Server", serverRow));
+        serverRow.Dock = DockStyle.Left;
         layout.Controls.Add(CreateFieldRow("Zone", WrapLedger(zoneKeyTextBox)));
 
         optionRow = new FlowLayoutPanel
@@ -912,6 +959,7 @@ public partial class Form1 : Form
         }
 
         serverChoice.ApplyScale(scale, compact);
+        worldStatus.ApplyScale(scale, compact);
 
         optionRow.FlowDirection = FlowDirection.TopDown;
         optionRow.WrapContents = false;
@@ -2196,6 +2244,214 @@ public partial class Form1 : Form
         public required ClientAntiTamperRuntimeGuard Guard { get; init; }
 
         public required Process Process { get; init; }
+    }
+
+    private sealed class WorldStatusBar : FlowLayoutPanel
+    {
+        private readonly RealmStatusChip whiteChip = new("White");
+        private readonly RealmStatusChip redChip = new("Red");
+        private readonly ToolTip toolTip = new();
+
+        public WorldStatusBar()
+        {
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            FlowDirection = FlowDirection.LeftToRight;
+            WrapContents = false;
+            Margin = new Padding(10, 0, 0, 0);
+            Padding = Padding.Empty;
+            try
+            {
+                BackColor = Color.Transparent;
+            }
+            catch (ArgumentException)
+            {
+                BackColor = EntryFill;
+            }
+
+            whiteChip.Margin = new Padding(0, 0, 6, 0);
+            redChip.Margin = Padding.Empty;
+            Controls.Add(whiteChip);
+            Controls.Add(redChip);
+            toolTip.SetToolTip(this, "Live world status from aetherium.ac");
+            toolTip.SetToolTip(whiteChip, "Checking Aetherium White…");
+            toolTip.SetToolTip(redChip, "Checking Aetherium Red…");
+        }
+
+        public void SetSnapshot(ServerStatusSnapshot snapshot)
+        {
+            SetRealm(whiteChip, "White", snapshot.White, snapshot.StatusKnown);
+            SetRealm(redChip, "Red", snapshot.Red, snapshot.StatusKnown);
+        }
+
+        public void ApplyScale(float scale, bool compact)
+        {
+            Margin = ScalePadding(new Padding(compact ? 4 : 10, 0, 0, 0), scale);
+            whiteChip.ApplyScale(scale, compact);
+            redChip.ApplyScale(scale, compact);
+            whiteChip.Margin = ScalePadding(new Padding(0, 0, compact ? 3 : 6, 0), scale);
+            redChip.Margin = Padding.Empty;
+        }
+
+        private void SetRealm(
+            RealmStatusChip chip,
+            string name,
+            RealmStatusSnapshot? realm,
+            bool statusKnown)
+        {
+            if (!statusKnown || realm is null)
+            {
+                chip.SetState($"{name} Unknown", RealmStatusChip.State.Unknown);
+                toolTip.SetToolTip(chip, $"{name} world status could not be reached.");
+                return;
+            }
+
+            if (realm.IsOnline)
+            {
+                chip.SetState(
+                    $"{name} Online ({realm.OnlineCount})",
+                    RealmStatusChip.State.Online);
+                toolTip.SetToolTip(
+                    chip,
+                    $"{name} is online · {realm.OnlineCount} player{(realm.OnlineCount == 1 ? string.Empty : "s")} online");
+            }
+            else
+            {
+                chip.SetState($"{name} Offline", RealmStatusChip.State.Offline);
+                toolTip.SetToolTip(chip, $"{name} is offline.");
+            }
+        }
+    }
+
+    private sealed class RealmStatusChip : Control
+    {
+        private static readonly Color ChipFill = Color.FromArgb(92, 53, 21);
+        private static readonly Color ChipFillTop = Color.FromArgb(121, 76, 34);
+        private static readonly Color ChipBorder = Color.FromArgb(218, 176, 96);
+        private static readonly Color ChipText = Color.FromArgb(255, 237, 190);
+        private static readonly Color OnlineDot = Color.FromArgb(65, 190, 83);
+        private static readonly Color OfflineDot = Color.FromArgb(220, 72, 55);
+        private static readonly Color UnknownDot = Color.FromArgb(191, 160, 99);
+
+        private readonly string realmName;
+        private State state = State.Unknown;
+
+        public enum State
+        {
+            Unknown,
+            Online,
+            Offline,
+        }
+
+        public RealmStatusChip(string realmName)
+        {
+            this.realmName = realmName;
+            Text = $"{realmName} Checking…";
+            Size = new Size(128, 26);
+            Margin = Padding.Empty;
+            Cursor = Cursors.Default;
+            Font = new Font("Georgia", 8.25f, FontStyle.Bold, GraphicsUnit.Point);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw |
+                ControlStyles.UserPaint,
+                true);
+        }
+
+        public void SetState(string text, State nextState)
+        {
+            Text = text;
+            state = nextState;
+            ResizeToContent();
+            Invalidate();
+        }
+
+        public void ApplyScale(float scale, bool compact)
+        {
+            Height = Math.Max(compact ? 20 : 24, ScaleInt(26, scale));
+            Font = CreateScaledFont(
+                "Georgia",
+                8.25f,
+                FontStyle.Bold,
+                scale,
+                compact ? 6.5f : 7.75f);
+            ResizeToContent(compact);
+            Invalidate();
+        }
+
+        private void ResizeToContent(bool compact = false)
+        {
+            var measured = TextRenderer.MeasureText(
+                Text,
+                Font,
+                new Size(int.MaxValue, int.MaxValue),
+                TextFormatFlags.NoPadding |
+                TextFormatFlags.NoPrefix |
+                TextFormatFlags.SingleLine);
+            var preferredWidth = measured.Width + 28;
+            var minWidth = compact ? 104 : 138;
+            var maxWidth = compact ? 150 : 178;
+            Width = Math.Clamp(preferredWidth, minWidth, maxWidth);
+            Parent?.PerformLayout();
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            // Draw the complete chip in OnPaint so the noisy parchment behind it
+            // never reduces status contrast.
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var rect = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+            using (var fill = new LinearGradientBrush(
+                       rect,
+                       ChipFillTop,
+                       ChipFill,
+                       LinearGradientMode.Vertical))
+            {
+                e.Graphics.FillRectangle(fill, rect);
+            }
+
+            using (var border = new Pen(ChipBorder))
+            {
+                e.Graphics.DrawRectangle(border, rect);
+            }
+
+            var dotColor = state switch
+            {
+                State.Online => OnlineDot,
+                State.Offline => OfflineDot,
+                _ => UnknownDot,
+            };
+            var dotSize = Math.Max(6, Math.Min(9, Height / 3));
+            var dotY = Math.Max(1, (Height - dotSize) / 2);
+            var dotRect = new Rectangle(7, dotY, dotSize, dotSize);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var dot = new SolidBrush(dotColor))
+            {
+                e.Graphics.FillEllipse(dot, dotRect);
+            }
+            using (var dotBorder = new Pen(Color.FromArgb(110, 20, 10, 4)))
+            {
+                e.Graphics.DrawEllipse(dotBorder, dotRect);
+            }
+
+            e.Graphics.SmoothingMode = SmoothingMode.None;
+            var textLeft = dotRect.Right + 5;
+            TextRenderer.DrawText(
+                e.Graphics,
+                Text,
+                Font,
+                new Rectangle(textLeft, 0, Math.Max(1, Width - textLeft - 4), Height),
+                ChipText,
+                TextFormatFlags.Left |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.NoPadding |
+                TextFormatFlags.NoPrefix |
+                TextFormatFlags.EndEllipsis);
+        }
     }
 
     private sealed class ServerChoiceBar : FlowLayoutPanel

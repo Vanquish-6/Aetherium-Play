@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.43 - 2026-10-06
+
+### Added
+
+- The launcher now shows live Aetherium White and Red world status beside the
+  server selector, including current player counts while a realm is online.
+  Status refreshes every 15 seconds from the public portal endpoint; network or
+  API failures display as Unknown and never block Play.
+- Realm status is rendered in compact high-contrast brown/brass chips with a
+  colored state dot. The chips size to their contents so White/Red status text
+  remains readable without adding another form row or clipping the controls
+  below it.
+
 ## 1.0.42 - 2026-09-30
 
 ### Fixed

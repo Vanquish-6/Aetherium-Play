@@ -657,6 +657,27 @@ using (var graphicsKey = Registry.CurrentUser.CreateSubKey(GraphicsRepairTestKey
 
 Registry.CurrentUser.DeleteSubKeyTree(GraphicsRepairTestKey, throwOnMissingSubKey: false);
 
+var parsedWorldStatus = ServerStatusService.ParseForTest("""
+    {
+      "realms": [
+        { "id": "white", "kind": "npk", "worldReady": true, "onlineCount": 2 },
+        { "id": "red", "kind": "pk", "worldReady": false, "onlineCount": 0 }
+      ]
+    }
+    """);
+True(parsedWorldStatus.StatusKnown, "launcher world status payload recognized");
+var parsedWhiteStatus = parsedWorldStatus.White
+    ?? throw new InvalidOperationException("launcher status payload missing White");
+var parsedRedStatus = parsedWorldStatus.Red
+    ?? throw new InvalidOperationException("launcher status payload missing Red");
+True(parsedWhiteStatus.IsOnline, "launcher White online state");
+Equal(2, parsedWhiteStatus.OnlineCount, "launcher White online count");
+True(!parsedRedStatus.IsOnline, "launcher Red offline state");
+Equal(0, parsedRedStatus.OnlineCount, "launcher Red online count");
+True(
+    !ServerStatusService.ParseForTest("{\"isOnline\":false}").StatusKnown,
+    "launcher incomplete world status stays unknown");
+
 var useTimeSignature = NativeClientDddAcceleration.SupportedSignatureForTest();
 Equal(32, useTimeSignature.Length, "UseTime signature length");
 BytesEqual(
