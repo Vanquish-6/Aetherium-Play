@@ -9,6 +9,60 @@ using System.Security.Cryptography;
 using System.Text;
 using AcLegacyLauncher;
 
+if (args.Length == 2 && args[0] == "--render-launcher-layout")
+{
+    Directory.CreateDirectory(args[1]);
+    foreach (var unreal in new[] { false,true })
+    {
+        var config=new LaunchConfig { UseUnrealClient=unreal,Host="play.aetherium.ac" };
+        config.EnsureSlots(); config.Slots[0].Account="Preview";
+        using var form=new Form1(null,config);
+        form.RenderLayoutPreview(Path.Combine(args[1],unreal?"Launcher-Unreal.png":"Launcher-Classic.png"));
+    }
+    Console.WriteLine("Launcher layout: PASS (Classic and Unreal, no clipped tool buttons; synthetic preview only)");
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--prove-unreal-launch")
+{
+    var proofRoot=Path.Combine(Path.GetTempPath(),"aetherium-unreal-proof-"+Guid.NewGuid().ToString("N"));
+    var binaryRoot=Path.Combine(proofRoot,"ACDM","Binaries","Win64");
+    Directory.CreateDirectory(binaryRoot);
+    try
+    {
+        var executable=Path.Combine(binaryRoot,"ACDM.exe");
+        File.WriteAllBytes(executable,[0]); // Identity fixture; never executed.
+        Equal(proofRoot,UnrealClientLauncher.FindInstalledDirectory(proofRoot) ?? "","saved valid Unreal location wins discovery");
+        var config=new LaunchConfig { UnrealInstallPath=proofRoot,UseUnrealClient=true };
+        config.EnsureSlots(); config.SelectedSlotId="2";
+        config.Slots[1].Account="fixture-account"; config.Slots[1].Password="synthetic-password";
+        config.Slots[1].Port=9100;
+        var inheritedPassword=Environment.GetEnvironmentVariable("ACDM_PASSWORD");
+        var start=UnrealClientLauncher.BuildStartInfo(config,"127.0.0.1");
+        Equal(executable,start.FileName,"Unreal uses its inner executable");
+        True(start.ArgumentList.Contains("-ACDMOnline"),"Unreal requests a live session");
+        True(start.ArgumentList.Contains("-ACDMPort=9100"),"selected Red realm reaches Unreal");
+        True(!string.Join(" ",start.ArgumentList).Contains("synthetic-password"),"password is absent from command-line logs");
+        Equal("fixture-account",start.Environment["ACDM_ACCOUNT"] ?? "","selected account reaches only the child");
+        Equal("synthetic-password",start.Environment["ACDM_PASSWORD"] ?? "","selected password reaches only the child");
+        Equal(inheritedPassword ?? "",Environment.GetEnvironmentVariable("ACDM_PASSWORD") ?? "","parent environment is unchanged");
+        True(start.ArgumentList.Any(value=>value.Contains("Slot2")),"Unreal settings are isolated by account slot");
+        config.Slots[1].Port=9000;
+        True(UnrealClientLauncher.BuildStartInfo(config,"127.0.0.1").ArgumentList.Contains("-ACDMPort=9000"),"White realm reaches Unreal");
+        config.Slots[1].Port=1234;
+        var refused=false;
+        try { UnrealClientLauncher.BuildStartInfo(config,"127.0.0.1"); } catch(InvalidOperationException) { refused=true; }
+        True(refused,"unsupported realm is rejected before process creation");
+        Console.WriteLine("Unreal launch handoff: PASS (Classic/Unreal routing, White/Red ports, slot selection, argv redaction and environment isolation)");
+        return 0;
+    }
+    finally
+    {
+        if (!Path.GetFullPath(proofRoot).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Unexpected proof path");
+        Directory.Delete(proofRoot,true);
+    }
+}
+
 if (args.Length == 2 &&
     string.Equals(args[0], "--prove-display-repair", StringComparison.OrdinalIgnoreCase))
 {

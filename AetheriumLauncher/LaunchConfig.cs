@@ -19,6 +19,10 @@ public sealed class LaunchConfig
 
     public string InstallPath { get; set; } = DefaultInstallPath;
 
+    public bool UseUnrealClient { get; set; }
+
+    public string UnrealInstallPath { get; set; } = @"C:\ACDM-Unreal\Windows";
+
     public string TicketKey { get; set; } = string.Empty;
 
     public string Host { get; set; } = AetheriumInstallationConfiguration.DefaultHost;

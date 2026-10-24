@@ -77,6 +77,10 @@ public partial class Form1 : Form
     private static readonly Color VioletDark = Color.FromArgb(27, 7, 24);
 
     private readonly TextBox installPathTextBox = new();
+    private readonly ServerChoiceBar clientChoice = new("Classic", "Unreal");
+    private string classicInstallPath = LaunchConfig.DefaultInstallPath;
+    private string unrealInstallPath = @"C:\ACDM-Unreal\Windows";
+    private bool loadingClientChoice;
     private readonly TextBox usernameTextBox = new();
     private readonly TextBox hostTextBox = new();
     private readonly ServerChoiceBar serverChoice = new();
@@ -97,10 +101,12 @@ public partial class Form1 : Form
     private readonly AccountSlot slotOne = new() { Id = "1" };
     private readonly AccountSlot slotTwo = new() { Id = "2" };
     private readonly string? startupInstallDirectory;
+    private readonly LaunchConfig? layoutPreviewConfig;
 
     private ZoneEraSurface? surface;
     private TransparentOverlayPanel? configOverlay;
     private FlowLayoutPanel? optionRow;
+    private TableLayoutPanel? zoneRow;
     private FlowLayoutPanel? toolRow;
     private Label? windowTitleChromeLabel;
     private Label? fileChromeLabel;
@@ -130,9 +136,10 @@ public partial class Form1 : Form
     {
     }
 
-    internal Form1(string? startupInstallDirectory)
+    internal Form1(string? startupInstallDirectory, LaunchConfig? layoutPreviewConfig = null)
     {
         this.startupInstallDirectory = startupInstallDirectory;
+        this.layoutPreviewConfig = layoutPreviewConfig;
         InitializeComponent();
         BuildLayout();
         if (startupInstallDirectory is not null)
@@ -147,6 +154,7 @@ public partial class Form1 : Form
     private async void Form1_Shown(object? sender, EventArgs e)
     {
         Shown -= Form1_Shown;
+        if (layoutPreviewConfig is not null) return;
         worldStatusTimer.Start();
         _ = RefreshWorldStatusAsync();
         await UpdateChecker.CheckForUpdatesAsync(
@@ -218,7 +226,8 @@ public partial class Form1 : Form
 
         foreach (var slot in running)
         {
-            slot.Guard.Dispose();
+            if (slot.Guard is not null) slot.Guard.Dispose();
+            else if (!slot.Process.HasExited) slot.Process.CloseMainWindow();
         }
     }
 
@@ -422,8 +431,19 @@ public partial class Form1 : Form
         slotChoice.Controls.Add(slotOneButton);
         slotChoice.Controls.Add(slotTwoButton);
 
+        clientChoice.SelectedIndex = 0;
+        clientChoice.SelectionChanged += (_, _) =>
+        {
+            if (loadingClientChoice) return;
+            if (clientChoice.SelectedIndex == 1) { classicInstallPath = installPathTextBox.Text; unrealInstallPath = UnrealClientLauncher.FindInstalledDirectory(unrealInstallPath) ?? unrealInstallPath; installPathTextBox.Text = unrealInstallPath; }
+            else { unrealInstallPath = installPathTextBox.Text; installPathTextBox.Text = classicInstallPath; }
+            ApplyClientMode();
+            SaveControlsToConfig();
+        };
+        slotChoice.Controls.Add(clientChoice);
+        slotChoice.Controls.SetChildIndex(clientChoice,0);
         layout.Controls.Add(CreateFieldRow("Install", WrapLedger(installPathTextBox)));
-        layout.Controls.Add(CreateFieldRow("Slot", slotChoice));
+        layout.Controls.Add(CreateFieldRow("Client / Slot", slotChoice));
         slotChoice.Dock = DockStyle.Left;
         layout.Controls.Add(CreateFieldRow("Account", WrapLedger(usernameTextBox)));
         layout.Controls.Add(CreateFieldRow("Password", WrapLedger(passwordTextBox)));
@@ -442,7 +462,8 @@ public partial class Form1 : Form
         serverRow.Controls.Add(worldStatus);
         layout.Controls.Add(CreateFieldRow("Server", serverRow));
         serverRow.Dock = DockStyle.Left;
-        layout.Controls.Add(CreateFieldRow("Zone", WrapLedger(zoneKeyTextBox)));
+        zoneRow = CreateFieldRow("Zone", WrapLedger(zoneKeyTextBox));
+        layout.Controls.Add(zoneRow);
 
         optionRow = new FlowLayoutPanel
         {
@@ -958,6 +979,8 @@ public partial class Form1 : Form
             ledger.ApplyScale(scale);
         }
 
+        clientChoice.ApplyScale(scale,compact);
+        clientChoice.Margin = ScalePadding(new Padding(0,0,8,0),scale);
         serverChoice.ApplyScale(scale, compact);
         worldStatus.ApplyScale(scale, compact);
 
@@ -1225,7 +1248,9 @@ public partial class Form1 : Form
 
     private void OpenInstallFolder()
     {
-        var installFolder = GetInstallDirectory();
+        var installFolder = clientChoice.SelectedIndex == 1
+            ? (Directory.Exists(installPathTextBox.Text) ? Path.GetFullPath(installPathTextBox.Text) : null)
+            : GetInstallDirectory();
         if (installFolder is null)
         {
             MessageBox.Show(this, "Set a valid install folder first.", LauncherName);
@@ -1241,7 +1266,7 @@ public partial class Form1 : Form
 
     private void BrowseButton_Click(object? sender, EventArgs e)
     {
-        if (startupInstallDirectory is not null)
+        if (startupInstallDirectory is not null && clientChoice.SelectedIndex == 0)
         {
             MessageBox.Show(
                 this,
@@ -1266,6 +1291,12 @@ public partial class Form1 : Form
             return;
         }
 
+        if (clientChoice.SelectedIndex == 1)
+        {
+            try { _ = UnrealClientLauncher.ResolveExecutable(dialog.SelectedPath); installPathTextBox.Text = dialog.SelectedPath; }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, LauncherName); }
+            return;
+        }
         var complete = GameInstallLayout.FindCompleteInstallUnder(dialog.SelectedPath);
         if (complete is null)
         {
@@ -1296,6 +1327,7 @@ public partial class Form1 : Form
 
     private async void LaunchButton_Click(object? sender, EventArgs e)
     {
+        if (layoutPreviewConfig is not null) return;
         var requestedSlotId = selectedSlotId;
         try
         {
@@ -1324,17 +1356,21 @@ public partial class Form1 : Form
             RefreshSlotChips();
 
             var config = ReadFormConfig();
-            if (startupInstallDirectory is not null)
+            if (startupInstallDirectory is not null && !config.UseUnrealClient)
             {
                 _ = LauncherStartupOptions.Parse(
                     ["--game-install", startupInstallDirectory]);
             }
 
-            ClientLauncher.ValidateForLaunch(config);
+            if (config.UseUnrealClient)
+            {
+                UnrealClientLauncher.Validate(config);
+            }
+            else ClientLauncher.ValidateForLaunch(config);
             SaveControlsToConfig();
 
             var result = await Task.Run(
-                () => ClientLauncher.Start(
+                () => config.UseUnrealClient ? UnrealClientLauncher.Start(config, launchCancellation.Token) : ClientLauncher.Start(
                     config,
                     ClientLauncher.GetRepositoryToolsDirectory(),
                     cancellationToken: launchCancellation.Token),
@@ -1371,7 +1407,7 @@ public partial class Form1 : Form
     {
         var guard = result.AntiTamperGuard;
         var process = result.Process;
-        if (guard is null || process is null)
+        if (process is null)
         {
             return;
         }
@@ -1383,6 +1419,7 @@ public partial class Form1 : Form
                 SlotId = result.SlotId,
                 Guard = guard,
                 Process = process,
+                IsUnreal = guard is null,
             };
         }
 
@@ -1396,11 +1433,11 @@ public partial class Form1 : Form
                 return;
             }
 
-            guard.Dispose();
+            guard?.Dispose();
             lock (runtimeGuardLock)
             {
                 if (runningSlots.TryGetValue(result.SlotId, out var running) &&
-                    ReferenceEquals(running.Guard, guard))
+                    ReferenceEquals(running.Process, process))
                 {
                     runningSlots.Remove(result.SlotId);
                 }
@@ -1438,10 +1475,14 @@ public partial class Form1 : Form
     private LaunchConfig ReadFormConfig()
     {
         WriteFieldsToSelectedSlot();
+        if (clientChoice.SelectedIndex == 1) unrealInstallPath = installPathTextBox.Text.Trim();
+        else classicInstallPath = installPathTextBox.Text.Trim();
         var selected = SelectedSlot();
         return new LaunchConfig
         {
-            InstallPath = startupInstallDirectory ?? installPathTextBox.Text.Trim(),
+            InstallPath = startupInstallDirectory ?? classicInstallPath,
+            UnrealInstallPath = unrealInstallPath,
+            UseUnrealClient = clientChoice.SelectedIndex == 1,
             TicketKey = selected.Account.Trim(),
             Host = hostTextBox.Text.Trim(),
             Port = selected.Port,
@@ -1513,14 +1554,21 @@ public partial class Form1 : Form
     private string? GetInstallDirectory()
     {
         return ClientLauncher.ResolveInstallDirectory(
-            startupInstallDirectory ?? installPathTextBox.Text);
+            startupInstallDirectory ?? (clientChoice.SelectedIndex == 0 ? installPathTextBox.Text : classicInstallPath));
     }
 
     private void LoadConfigIntoControls()
     {
-        var (config, configLoadedFromDisk) = LoadConfig();
+        var (config, configLoadedFromDisk) = layoutPreviewConfig is not null
+            ? (layoutPreviewConfig, true) : LoadConfig();
 
-        installPathTextBox.Text = config.InstallPath;
+        classicInstallPath = config.InstallPath;
+        unrealInstallPath = UnrealClientLauncher.FindInstalledDirectory(config.UnrealInstallPath) ?? config.UnrealInstallPath;
+        loadingClientChoice = true;
+        clientChoice.SelectedIndex = config.UseUnrealClient ? 1 : 0;
+        loadingClientChoice = false;
+        installPathTextBox.Text = config.UseUnrealClient ? unrealInstallPath : classicInstallPath;
+        installPathTextBox.ReadOnly = startupInstallDirectory is not null && !config.UseUnrealClient;
         hostTextBox.Text = config.Host;
         CopySlotsFrom(config);
         LoadSelectedSlotFields();
@@ -1528,6 +1576,7 @@ public partial class Form1 : Form
         useNoDisplayModeCheckBox.Checked = config.UseNoDisplayMode;
         seedSafeGraphicsCheckBox.Checked = config.SeedSafeGraphics;
         ApplySkin(config.Skin, save: false);
+        ApplyClientMode();
 
         if (string.IsNullOrWhiteSpace(installPathTextBox.Text))
         {
@@ -1539,7 +1588,7 @@ public partial class Form1 : Form
             ApplyLauncherIniDefaults();
         }
 
-        ClientLauncher.RemoveLegacyProfileStore();
+        if (layoutPreviewConfig is null) ClientLauncher.RemoveLegacyProfileStore();
     }
 
     private void ApplyLauncherIniDefaults()
@@ -1562,8 +1611,24 @@ public partial class Form1 : Form
         RefreshSlotChips();
     }
 
+    private void ApplyClientMode()
+    {
+        var unreal=clientChoice.SelectedIndex==1;
+        installPathTextBox.ReadOnly=startupInstallDirectory is not null && !unreal;
+        if (zoneRow is not null) zoneRow.Visible=!unreal;
+        if (optionRow is not null)
+        {
+            optionRow.Visible = !unreal;
+            optionRow.Enabled = !unreal;
+        }
+        foreach (var button in toolButtons)
+            button.Visible=!unreal || button.Text=="Folder";
+        configOverlay?.PerformLayout();
+    }
+
     private void SaveControlsToConfig()
     {
+        if (layoutPreviewConfig is not null) return;
         var config = ReadFormConfig();
 
         var configDirectory = Path.GetDirectoryName(GetConfigPath(config.InstallPath));
@@ -2237,11 +2302,44 @@ public partial class Form1 : Form
         }
     }
 
+    internal void RenderLayoutPreview(string path)
+    {
+        if (layoutPreviewConfig is null) throw new InvalidOperationException("Preview requires synthetic configuration.");
+        var originalClient = clientChoice.SelectedIndex;
+        clientChoice.SelectedIndex = 1;
+        if (optionRow is null || optionRow.Enabled)
+            throw new InvalidOperationException("Classic options must be disabled in Unreal mode.");
+        clientChoice.SelectedIndex = 0;
+        if (!optionRow.Enabled)
+            throw new InvalidOperationException("Classic options must be enabled after leaving Unreal mode.");
+        clientChoice.SelectedIndex = originalClient;
+        ShowInTaskbar = false;
+        Opacity = 0;
+        Show(); // Synthetic, noninteractive fixture only; runs normal WinForms layout.
+        Application.DoEvents();
+        CreateControl();
+        PerformLayout();
+        LayoutOverlayControls();
+        foreach (var row in fieldRows) row.PerformLayout();
+        toolRow?.PerformLayout();
+        using var image = new Bitmap(Width,Height);
+        DrawToBitmap(image,new Rectangle(Point.Empty,Size));
+        image.Save(path,ImageFormat.Png);
+        if (configOverlay is null) throw new InvalidOperationException("Missing preview overlay.");
+        var clip = configOverlay.RectangleToScreen(configOverlay.ClientRectangle);
+        foreach (var button in toolButtons)
+            if (button.Visible && !clip.Contains(button.RectangleToScreen(button.ClientRectangle)))
+                throw new InvalidOperationException($"Launcher control is clipped: {button.Text}");
+        Hide();
+    }
+
     private sealed class RunningSlot
     {
         public required string SlotId { get; init; }
 
-        public required ClientAntiTamperRuntimeGuard Guard { get; init; }
+        public ClientAntiTamperRuntimeGuard? Guard { get; init; }
+
+        public bool IsUnreal { get; init; }
 
         public required Process Process { get; init; }
     }
@@ -2463,8 +2561,9 @@ public partial class Form1 : Form
         public event EventHandler? SelectionChanged;
 
         public bool RedSelected { get; private set; }
+        public int SelectedIndex { get => RedSelected ? 1 : 0; set => SelectRed(value == 1); }
 
-        public ServerChoiceBar()
+        public ServerChoiceBar(string first = "White", string second = "Red")
         {
             AutoSize = true;
             AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -2481,10 +2580,10 @@ public partial class Form1 : Form
             Margin = Padding.Empty;
             Padding = Padding.Empty;
 
-            whiteButton = CreateServerButton("White", ArcaneButton.ButtonPalette.Bone);
-            redButton = CreateServerButton("Red", ArcaneButton.ButtonPalette.Blood);
-            toolTip.SetToolTip(whiteButton, "White server · port 9000");
-            toolTip.SetToolTip(redButton, "Red server · port 9100");
+            whiteButton = CreateServerButton(first, ArcaneButton.ButtonPalette.Bone);
+            redButton = CreateServerButton(second, ArcaneButton.ButtonPalette.Blood);
+            toolTip.SetToolTip(whiteButton, first == "White" ? "White server · port 9000" : "Classic client");
+            toolTip.SetToolTip(redButton, second == "Red" ? "Red server · port 9100" : "Unreal client");
             Controls.Add(whiteButton);
             Controls.Add(redButton);
             SetRedSelected(false);
