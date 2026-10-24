@@ -232,7 +232,11 @@ internal enum NativeDatDrainState
 /// value (TextRegion::SetInt signed and unsigned, StatRegion::SetInt,
 /// InfoBox::SetAvailable, and AllegPanel::SetXPChange). Global
 /// TextRegion::SetText stays stock: 1.0.26 detoured it and that prevented
-/// the client from opening.
+/// the client from opening. The examine-name hook supplies the ID-panel
+/// string for creature type 102. It is installed in this same suspended
+/// window, and its detour is registered with the other patch regions so the
+/// runtime integrity check expects those bytes.
+
 ///
 /// The verified retail layout exposes each Asynch_Cache pending-request count
 /// at +0x60. Inbound consumption pauses when either writer reaches the
@@ -241,7 +245,7 @@ internal enum NativeDatDrainState
 /// workers to return from their save/iteration requests. This is worker-drained
 /// completion, not a claim of power-loss durability through FlushFileBuffers.
 /// </summary>
-internal static class NativeClientDddAcceleration
+internal static partial class NativeClientDddAcceleration
 {
     internal const int MaxMessagesPerFrame = 8;
     // Conservative policy, not a native-client capacity claim. At 32 pending
@@ -742,6 +746,7 @@ internal static class NativeClientDddAcceleration
         var infoBoxPatchAttempted = false;
         var allegPanelPatchAttempted = false;
         var versionPatchAttempted = false;
+        var examineHook = new ExamineNameHookInstallation();
         try
         {
             var code = BuildRemoteCode(remoteCode, profile, datDrainState);
@@ -881,6 +886,8 @@ internal static class NativeClientDddAcceleration
                 (nuint)allegPanelPatch.Length,
                 "AllegPanel::SetXPChange detour");
 
+            InstallExamineNameHook(processHandle, examineHook);
+
             // The server echoes this exact same-length version in PacketTwo. The
             // client also compares PacketTwo against this literal, so the marker
             // advertises the fully-installed hooks without changing the legacy
@@ -893,54 +900,58 @@ internal static class NativeClientDddAcceleration
                 CapabilityVersionLiteral,
                 "accelerated DAT repair capability marker");
 
+            var regions = new List<RemotePatchRegion>
+            {
+                new(
+                    remoteCode,
+                    code,
+                    "installed accelerated DAT repair code"),
+                new(
+                    useTimeAddress,
+                    entryPatch,
+                    "installed CLCache::UseTime detour"),
+                new(
+                    downloadStatusTailAddress,
+                    downloadStatusPatch,
+                    "installed CLCache::Get_Download_Status drain detour"),
+                new(
+                    spellRegionAddress,
+                    spellRegionPatch,
+                    "installed SpellRegion::Update detour"),
+                new(
+                    setIntSignedAddress,
+                    setIntSignedPatch,
+                    "installed TextRegion::SetInt signed detour"),
+                new(
+                    setIntUnsignedAddress,
+                    setIntUnsignedPatch,
+                    "installed TextRegion::SetInt unsigned detour"),
+                new(
+                    statRegionAddress,
+                    statRegionPatch,
+                    "installed StatRegion::SetInt detour"),
+                new(
+                    infoBoxAddress,
+                    infoBoxPatch,
+                    "installed InfoBox::SetAvailable detour"),
+                new(
+                    allegPanelAddress,
+                    allegPanelPatch,
+                    "installed AllegPanel::SetXPChange detour"),
+                new(
+                    versionAddress,
+                    CapabilityVersionLiteral,
+                    "installed client version marker"),
+            };
+            regions.AddRange(examineHook.Regions);
             var installation = new NativeClientDddAccelerationInstallation(
                 $"Accelerated DAT repair enabled ({CapabilityVersion}; {profile.Id}; up to " +
                 $"{MaxMessagesPerFrame} queued records per frame; async writer guard active; " +
-                "SpellRegion duration-text hitch bypass active (in-place m:ss glyphs); number-label hitch bypass active).",
+                "SpellRegion duration-text hitch bypass active (in-place m:ss glyphs); number-label hitch bypass active). " +
+                examineHook.Detail,
                 profile,
                 datDrainState,
-                [
-                    new RemotePatchRegion(
-                        remoteCode,
-                        code,
-                        "installed accelerated DAT repair code"),
-                    new RemotePatchRegion(
-                        useTimeAddress,
-                        entryPatch,
-                        "installed CLCache::UseTime detour"),
-                    new RemotePatchRegion(
-                        downloadStatusTailAddress,
-                        downloadStatusPatch,
-                        "installed CLCache::Get_Download_Status drain detour"),
-                    new RemotePatchRegion(
-                        spellRegionAddress,
-                        spellRegionPatch,
-                        "installed SpellRegion::Update detour"),
-                    new RemotePatchRegion(
-                        setIntSignedAddress,
-                        setIntSignedPatch,
-                        "installed TextRegion::SetInt signed detour"),
-                    new RemotePatchRegion(
-                        setIntUnsignedAddress,
-                        setIntUnsignedPatch,
-                        "installed TextRegion::SetInt unsigned detour"),
-                    new RemotePatchRegion(
-                        statRegionAddress,
-                        statRegionPatch,
-                        "installed StatRegion::SetInt detour"),
-                    new RemotePatchRegion(
-                        infoBoxAddress,
-                        infoBoxPatch,
-                        "installed InfoBox::SetAvailable detour"),
-                    new RemotePatchRegion(
-                        allegPanelAddress,
-                        allegPanelPatch,
-                        "installed AllegPanel::SetXPChange detour"),
-                    new RemotePatchRegion(
-                        versionAddress,
-                        CapabilityVersionLiteral,
-                        "installed client version marker"),
-                ]);
+                regions);
             VerifyInstalled(processHandle, installation);
 
             committed = true;
@@ -956,6 +967,22 @@ internal static class NativeClientDddAcceleration
                     versionAddress,
                     profile.OriginalVersionLiteral,
                     "client version marker",
+                    rollbackErrors);
+            }
+
+            if (examineHook.PatchAttempted)
+            {
+                TryRollback(
+                    processHandle,
+                    examineHook.SwitchAddress,
+                    ExamineNameOriginalPrologue(),
+                    "examine-name detour",
+                    rollbackErrors);
+                TryFlushRollback(
+                    processHandle,
+                    examineHook.SwitchAddress,
+                    ExamineNameStolenLength,
+                    "examine-name detour rollback",
                     rollbackErrors);
             }
 
@@ -1107,6 +1134,10 @@ internal static class NativeClientDddAcceleration
             {
                 VirtualFreeEx(processHandle, datDrainState, 0, MemRelease);
                 VirtualFreeEx(processHandle, remoteCode, 0, MemRelease);
+                if (examineHook.Cave != IntPtr.Zero)
+                {
+                    VirtualFreeEx(processHandle, examineHook.Cave, 0, MemRelease);
+                }
             }
         }
     }

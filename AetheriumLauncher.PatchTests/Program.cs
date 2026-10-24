@@ -1735,6 +1735,187 @@ True(
     WrapperJumpsTo(highInfoBoxPlaced, highInfoBoxWrapper, infoBoxSetParentTail),
     "high-address InfoBox skip still reaches SetParent tail");
 
+var examineBlockBase = 0x00420000u;
+var examineBlock = new byte[0x240];
+new byte[]
+{
+    0x8B, 0x44, 0x24, 0x04, 0x48, 0x83, 0xF8, 0x4C, 0x0F, 0x87,
+    0x00, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90,
+}.CopyTo(examineBlock, 0);
+const int examineSwitchOffset = 0x20;
+var examineSwitch = examineBlockBase + examineSwitchOffset;
+var examineTable = examineBlockBase + 0x100;
+var examineCase = examineBlockBase + 0x80;
+new byte[]
+{
+    0x8B, 0x44, 0x24, 0x04, 0x48, 0x83, 0xF8, 0x4C, 0x0F, 0x87,
+    0x00, 0x00, 0x00, 0x00, 0xFF, 0x24, 0x85,
+}.CopyTo(examineBlock, examineSwitchOffset);
+BinaryPrimitives.WriteUInt32LittleEndian(
+    examineBlock.AsSpan(examineSwitchOffset + 17, 4),
+    examineTable);
+new byte[] { 0xB9, 0x11, 0x22, 0x33, 0x44, 0xE9, 0x00, 0x00, 0x00, 0x00 }
+    .CopyTo(examineBlock, 0x60);
+new byte[] { 0xB9, 0x11, 0x22, 0x33, 0x44, 0xEB, 0x05, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x8B, 0xC1 }
+    .CopyTo(examineBlock, 0x80);
+BinaryPrimitives.WriteUInt32LittleEndian(examineBlock.AsSpan(0x100, 4), examineBlockBase + 0x60);
+BinaryPrimitives.WriteUInt32LittleEndian(
+    examineBlock.AsSpan(0x100 + (76 * 4), 4),
+    examineCase);
+
+byte[]? ReadExamineImage(byte[] image, uint imageBase, uint address, int length)
+{
+    if (length <= 0 || length > image.Length || address < imageBase)
+    {
+        return null;
+    }
+
+    var offset = address - imageBase;
+    if (offset > (uint)(image.Length - length))
+    {
+        return null;
+    }
+
+    return image[(int)offset..((int)offset + length)];
+}
+
+True(
+    NativeClientDddAcceleration.TryLocateExamineNameSiteForTest(
+        [(examineBlockBase, examineBlock)],
+        (address, length) => ReadExamineImage(examineBlock, examineBlockBase, address, length),
+        out var examineSite,
+        out var examineDetail),
+    "synthetic examine-name site locates");
+Equal(string.Empty, examineDetail, "synthetic examine-name locate detail");
+Equal(examineSwitch, examineSite.SwitchAddress, "synthetic examine-name switch");
+Equal(examineCase + 12, examineSite.EpilogueAddress, "synthetic examine-name epilogue");
+
+var brokenCase = (byte[])examineBlock.Clone();
+brokenCase[0x85] = 0x06;
+True(
+    !NativeClientDddAcceleration.TryLocateExamineNameSiteForTest(
+        [(examineBlockBase, brokenCase)],
+        (address, length) => ReadExamineImage(brokenCase, examineBlockBase, address, length),
+        out _,
+        out var brokenCaseDetail),
+    "type 77 case without jmp short +5 is skipped");
+True(
+    brokenCaseDetail.Contains("jmp short +5", StringComparison.Ordinal),
+    "type 77 mismatch is logged in the skip detail");
+
+True(
+    !NativeClientDddAcceleration.TryLocateExamineNameSiteForTest(
+        [(examineBlockBase, examineBlock), (examineBlockBase + 0x1000, examineBlock)],
+        (address, length) => ReadExamineImage(examineBlock, examineBlockBase, address, length),
+        out _,
+        out var duplicateExamineDetail),
+    "two examine-name signatures are skipped");
+True(
+    duplicateExamineDetail.Contains("matched 2 times", StringComparison.Ordinal),
+    "duplicate examine-name signature is logged");
+
+True(
+    !NativeClientDddAcceleration.TryLocateExamineNameSiteForTest(
+        [(examineBlockBase, examineBlock)],
+        (_, _) => null,
+        out _,
+        out var unreadableTableDetail),
+    "unreadable examine-name jump table is skipped");
+True(
+    unreadableTableDetail.Contains("not readable", StringComparison.Ordinal),
+    "unreadable jump table is logged");
+
+True(
+    !NativeClientDddAcceleration.TryLocateExamineNameSiteForTest(
+        [],
+        (_, _) => null,
+        out _,
+        out var missingExamineDetail),
+    "missing examine-name signature is skipped");
+True(
+    missingExamineDetail.Contains("not found", StringComparison.Ordinal),
+    "missing examine-name signature is logged");
+
+var examineCaveAddress = new IntPtr(0x01000000);
+var examineSwitchAddress = new IntPtr(unchecked((int)examineSite.SwitchAddress));
+var examineEpilogueAddress = new IntPtr(unchecked((int)examineSite.EpilogueAddress));
+var examineCave = NativeClientDddAcceleration.BuildExamineNameCave(
+    examineCaveAddress,
+    examineSwitchAddress,
+    examineEpilogueAddress);
+Equal(
+    NativeClientDddAcceleration.ExamineNameCaveCodeLength + "Dachshund\0"u8.Length,
+    examineCave.Length,
+    "examine-name cave size");
+BytesEqual(
+    [0x8B, 0x44, 0x24, 0x04, 0x83, 0xF8, 102, 0x74, 0x06, 0x48],
+    examineCave[..10],
+    "examine-name cave type check");
+Equal(
+    new IntPtr(unchecked((int)(examineSite.SwitchAddress +
+        NativeClientDddAcceleration.ExamineNameStolenLength))),
+    NativeClientDddAcceleration.DecodeRelativeTarget(examineCave, 10, examineCaveAddress),
+    "examine-name cave returns to cmp eax, 76");
+Equal((byte)0xB9, examineCave[15], "examine-name cave loads the string");
+Equal(
+    (uint)(examineCaveAddress.ToInt64() + NativeClientDddAcceleration.ExamineNameCaveCodeLength),
+    BinaryPrimitives.ReadUInt32LittleEndian(examineCave.AsSpan(16, 4)),
+    "examine-name string address");
+Equal(
+    examineEpilogueAddress,
+    NativeClientDddAcceleration.DecodeRelativeTarget(examineCave, 20, examineCaveAddress),
+    "examine-name cave jumps to the shared epilogue");
+BytesEqual("Dachshund\0"u8.ToArray(), examineCave[25..], "examine-name remote string");
+var examineDetour = NativeClientDddAcceleration.BuildExamineNameDetour(
+    examineSwitchAddress,
+    examineCaveAddress);
+Equal(
+    NativeClientDddAcceleration.ExamineNameStolenLength,
+    examineDetour.Length,
+    "examine-name detour width");
+Equal(
+    examineCaveAddress,
+    NativeClientDddAcceleration.DecodeRelativeTarget(examineDetour, 0, examineSwitchAddress),
+    "examine-name detour target");
+var patchedSwitch = examineBlock.AsSpan(examineSwitchOffset, 21).ToArray();
+examineDetour.CopyTo(patchedSwitch, 0);
+BytesEqual(
+    [0x83, 0xF8, 0x4C, 0x0F, 0x87],
+    patchedSwitch[5..10],
+    "types 1 through 77 still enter cmp eax, 76");
+
+foreach (var knownClient in new (string Path, uint Switch, uint Epilogue)[]
+{
+    (@"C:\asheronscalldm\client.exe", 0x00582620, 0x005828FC),
+    (@"C:\asheronscalldm\admin\client.exe", 0x005C30A0, 0x005C337C),
+})
+{
+    if (!File.Exists(knownClient.Path))
+    {
+        Console.WriteLine($"SKIP: examine-name client image not present at {knownClient.Path}");
+        continue;
+    }
+
+    var clientImage = File.ReadAllBytes(knownClient.Path);
+    True(
+        NativeClientDddAcceleration.TryLocateExamineNameSiteInFileForTest(
+            clientImage,
+            out var clientSite,
+            out var clientDetail),
+        $"examine-name site in {knownClient.Path}");
+    Equal(string.Empty, clientDetail, $"examine-name detail for {knownClient.Path}");
+    Equal(knownClient.Switch, clientSite.SwitchAddress, $"examine-name switch in {knownClient.Path}");
+    Equal(
+        knownClient.Epilogue,
+        clientSite.EpilogueAddress,
+        $"examine-name epilogue in {knownClient.Path}");
+    var epilogueRva = (int)(clientSite.EpilogueAddress - NativeClientDddAcceleration.PreferredImageBase);
+    BytesEqual(
+        [0x8B, 0xC1],
+        clientImage[epilogueRva..(epilogueRva + 2)],
+        $"shared epilogue in {knownClient.Path}");
+}
+
 var emptyStartupOptions = LauncherStartupOptions.Parse([]);
 True(emptyStartupOptions.GameInstallDirectory is null, "default UI install selection");
 var startupTestDirectory = Path.Combine(
@@ -2097,7 +2278,14 @@ if (args is [var integrationMode, var clientPath] &&
             "runtime patch detail writer guard");
         True(detail.Contains("number-label hitch bypass active", StringComparison.Ordinal),
             "runtime patch detail number-label hitch bypass");
-        Equal(10, installation.Regions.Count, "monitored runtime patch region count");
+        Equal(12, installation.Regions.Count, "monitored runtime patch region count");
+        True(
+            installation.Detail.Contains("Dachshund", StringComparison.Ordinal),
+            "runtime patch detail names creature type 102");
+        True(
+            installation.Regions.Any(region =>
+                region.Label.Contains("examine-name detour", StringComparison.Ordinal)),
+            "examine-name detour is an integrity region");
         NativeClientDddAcceleration.VerifyInstalled(processHandle, installation);
 
         foreach (var region in installation.Regions)
@@ -2173,7 +2361,7 @@ if (args is [var integrationMode, var clientPath] &&
 
         Console.WriteLine(
             $"PASS: installed the transactional runtime patch, detected real mutations in all " +
-            $"ten regions, monitored PID {process.Id} while " +
+            $"twelve regions, monitored PID {process.Id} while " +
             $"{(resumeClient ? "resumed" : "suspended")}, and ended it after runtime tamper: " +
             detail);
     }
