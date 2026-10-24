@@ -4,6 +4,7 @@
 
 # Project-local release artifacts
 artifacts/
+.worktrees/
 
 # IDE and user-specific state
 .vs/

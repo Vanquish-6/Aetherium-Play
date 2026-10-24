@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.44 - 2026-10-24
+
+### Added
+
+- Choose Classic or an already-installed Unreal client in the launcher. Each
+  client remembers its own install folder and uses the selected account slot
+  and White or Red realm. Unreal credentials are passed through the child
+  process environment rather than the command line.
+- Unreal settings are isolated by account slot; writable DAT files are isolated
+  by slot and realm. This installer does not download or bundle the Unreal client.
+- Classic creature examination displays Dachshund for creature type 102. The
+  process-local hook is included in runtime integrity checks and rollback.
+
+### Fixed
+
+- Switching from a saved Unreal selection back to Classic restores the Classic
+  launch options. Synthetic layout checks cover both client modes and switching.
+
 ## 1.0.43 - 2026-10-06
 
 ### Added
