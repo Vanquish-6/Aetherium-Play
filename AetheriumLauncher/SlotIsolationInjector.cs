@@ -186,12 +186,13 @@ internal static class SlotIsolationInjector
                     "CreateRemoteThread failed while installing account slot isolation.");
             }
 
+            var installed = 0u;
             if (WaitForSingleObject(installThread, 15_000) != 0 ||
-                !GetExitCodeThread(installThread, out var installed) ||
+                !GetExitCodeThread(installThread, out installed) ||
                 installed != 1)
             {
                 throw new InvalidOperationException(
-                    "Account slot isolation did not install, so the client was not started.");
+                    $"Account slot isolation did not install (exit 0x{installed:X8}), so the client was not started.");
             }
         }
         finally

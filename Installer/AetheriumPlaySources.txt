@@ -92,6 +92,11 @@ launcher also ends that client. The reason is written locally to:
 This is a public, user-mode deterrent. It does not provide cryptographic proof
 against a purpose-built modified client.
 
+The optional Aeth-Tank add-on is proprietary and distributed separately.
+It is not embedded in this installer. When a release is available, the
+launcher asks before downloading it and provides enable/disable and uninstall
+controls under Tools. Its source is not included in the public launcher source.
+
 Public launcher source:
 https://github.com/Vanquish-6/Aetherium-Play
 

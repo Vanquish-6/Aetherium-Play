@@ -136,6 +136,31 @@ static class Program
             });
         }
 
+        if (args.Length == 2 &&
+            string.Equals(args[0], "--verify-unreal-release", StringComparison.OrdinalIgnoreCase))
+        {
+            return RunGameInstallerCommand(() =>
+            {
+                var executable = UnrealClientLauncher.ResolveExecutable(args[1]);
+                var projectDirectory = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(executable)!, "..", ".."));
+                using (UnrealReleaseVerifier.OpenVerifiedExecutable(projectDirectory, executable)) { }
+                WriteAetheriumPlayLog($"UNREAL RELEASE: {executable} matches its signed release.");
+                return Task.CompletedTask;
+            });
+        }
+
+        if (args.Length == 1 &&
+            string.Equals(args[0], "--install-aeth-tank", StringComparison.OrdinalIgnoreCase))
+        {
+            return InstallAethTankFromSetup();
+        }
+
+        if (args.Length == 1 &&
+            string.Equals(args[0], "--install-unreal", StringComparison.OrdinalIgnoreCase))
+        {
+            return InstallUnrealFromSetup();
+        }
+
         if (args.Any(arg => string.Equals(arg, "--smoke-launch", StringComparison.OrdinalIgnoreCase)))
         {
             return RunSmokeLaunch();
@@ -178,6 +203,67 @@ static class Program
             $"{(form.ExitCode == 0 ? "SUCCESS" : "FAILURE")}: {operationName}; " +
             $"exit {form.ExitCode}{failureDetail}");
         return form.ExitCode;
+    }
+
+    /// <summary>
+    /// Optional setup step. Goes through the same signed-manifest and hash checks as
+    /// Tools > Aeth-Tank add-on. Exit 2 means no verified release is published yet,
+    /// which setup treats as "install later", never as a failed install.
+    /// </summary>
+    private static int InstallAethTankFromSetup()
+    {
+        try
+        {
+            var manager = AethTankAddonManager.Default;
+            var release = manager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            if (release is null)
+            {
+                WriteAetheriumPlayLog(
+                    $"AETH-TANK: nothing to install. {manager.GetStatus().Message}");
+                return manager.GetStatus().CurrentVersion is null ? 2 : 0;
+            }
+
+            manager.InstallAsync(
+                    release,
+                    new Progress<string>(message => WriteAetheriumPlayLog($"AETH-TANK: {message}")))
+                .GetAwaiter()
+                .GetResult();
+            WriteAetheriumPlayLog($"SUCCESS: Aeth-Tank {release.Version} installed from setup.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            WriteAetheriumPlayLog(
+                "AETH-TANK: no verified release was installed; it can be added later from " +
+                $"Tools > Aeth-Tank add-on.{Environment.NewLine}{ex}");
+            return 2;
+        }
+    }
+
+    /// <summary>
+    /// Optional setup step. A missing catalog is "install later" and returns 0 so setup
+    /// still finishes. A hash or download failure returns 1.
+    /// </summary>
+    private static int InstallUnrealFromSetup()
+    {
+        try
+        {
+            _ = UnrealClientInstaller.FetchCatalogAsync(CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (UnrealDownloadUnavailableException)
+        {
+            WriteAetheriumPlayLog("UNREAL: download catalog is not published yet. It can be added later from the launcher.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            WriteAetheriumPlayLog($"UNREAL: download catalog could not be read.{Environment.NewLine}{ex}");
+            return 1;
+        }
+
+        return RunProgressOperation(
+            "Downloading the Unreal client",
+            UnrealClientInstaller.InstallFromCatalogAsync);
     }
 
     private static int RunGameInstallerCommand(Func<Task> operation)

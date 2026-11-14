@@ -160,6 +160,8 @@ public partial class Form1 : Form
         await UpdateChecker.CheckForUpdatesAsync(
             this,
             interactive: false);
+        if (!IsDisposed && !Disposing && clientChoice.SelectedIndex != 1)
+            await AethTankAddonForm.OfferOnceAsync(this, launchCancellation.Token);
     }
 
     private async void WorldStatusTimer_Tick(object? sender, EventArgs e)
@@ -722,6 +724,30 @@ public partial class Form1 : Form
             ShowImageMargin = false,
         };
         menu.Items.Add("Open Install Folder", null, (_, _) => OpenInstallFolder());
+        menu.Items.Add("Aeth-Tank add-on...", null, (_, _) =>
+        {
+            using var dialog = new AethTankAddonForm();
+            dialog.ShowDialog(this);
+        });
+        menu.Items.Add("Download Unreal client...", null, async (_, _) =>
+        {
+            try
+            {
+                await UnrealClientInstaller.EnsureReadyAsync(this, CancellationToken.None);
+                var installed = UnrealClientLauncher.FindInstalledDirectory(null);
+                if (installed is not null)
+                {
+                    unrealInstallPath = installed;
+                    if (clientChoice.SelectedIndex == 1)
+                        installPathTextBox.Text = unrealInstallPath;
+                }
+                MessageBox.Show(this, "The Unreal client is ready.", LauncherName);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, LauncherName);
+            }
+        });
         menu.Items.Add(new ToolStripSeparator());
         var skinMenu = new ToolStripMenuItem("Launcher Skin");
         defaultSkinMenuItem = new ToolStripMenuItem("Default", null, (_, _) => ApplySkin(DefaultSkinName, save: true));
@@ -1364,6 +1390,14 @@ public partial class Form1 : Form
 
             if (config.UseUnrealClient)
             {
+                await UnrealClientInstaller.EnsureReadyAsync(this, launchCancellation.Token);
+                var installed = UnrealClientLauncher.FindInstalledDirectory(unrealInstallPath);
+                if (installed is not null)
+                {
+                    unrealInstallPath = installed;
+                    installPathTextBox.Text = unrealInstallPath;
+                    config.UnrealInstallPath = unrealInstallPath;
+                }
                 UnrealClientLauncher.Validate(config);
             }
             else ClientLauncher.ValidateForLaunch(config);

@@ -9,6 +9,9 @@ using System.Security.Cryptography;
 using System.Text;
 using AcLegacyLauncher;
 
+if (args.Length == 2 && args[0] == "--verify-addon-ui")
+    return AddonUiChecks.Run(args[1]);
+
 if (args.Length == 2 && args[0] == "--render-launcher-layout")
 {
     Directory.CreateDirectory(args[1]);

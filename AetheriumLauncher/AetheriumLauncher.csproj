@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -48,6 +48,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AetheriumLauncher.PatchTests" />
+    <InternalsVisibleTo Include="AetheriumLauncher.AddonTests" />
   </ItemGroup>
 
 </Project>

@@ -116,19 +116,37 @@ public static class ClientLauncher
         Process process;
         IntPtr processHandle;
         IntPtr threadHandle;
+        AethTankLaunchLease? addonLease = null;
+        string? tankPluginPath = null;
+        string? tankDataDirectory = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // Every classic launch holds the shared add-on lease, even when the
+            // add-on is disabled, so an update cannot race a new game process.
+            addonLease = AethTankAddonManager.Default.AcquireForLaunch(expectedProfile.Id, report);
+            tankPluginPath = addonLease.PluginPath;
+            if (tankPluginPath is not null) tankDataDirectory = addonLease.DataDirectory;
+            else if (!addonLease.ManagedStateExists)
+                tankPluginPath = AethTankPluginBootstrap.FindDevelopmentPlugin();
+            var childEnvironment = slotEnvironment.ToProcessEnvironment()
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            // Only the verified managed selection receives this override. Clear
+            // inherited values for legacy/developer launches; never alter the parent.
+            if (tankDataDirectory is not null)
+                childEnvironment["AETH_TANK_DATA_DIR"] = tankDataDirectory;
             process = NativeProcess.StartSuspendedClient(
                 clientPath,
                 workingDirectory,
                 arguments,
                 out processHandle,
                 out threadHandle,
-                slotEnvironment.ToProcessEnvironment());
+                childEnvironment,
+                removeEnvironmentVariables: ["AETH_TANK_DATA_DIR"]);
         }
         catch
         {
+            addonLease?.Dispose();
             datLaunchLease?.Dispose();
             workspaceLease?.Dispose();
             throw;
@@ -159,6 +177,19 @@ public static class ClientLauncher
             }
             dddAccelerationDetail = dddAcceleration.Detail;
             report?.Invoke(dddAccelerationDetail);
+
+            // Enable the private plugin call while the main thread is still the
+            // only thread and is suspended at the process entry, not in this page.
+            var tankDetail = AethTankPluginBootstrap.TryEnable(
+                processHandle,
+                expectedProfile.Id,
+                slotEnvironment.RegistrySubKey,
+                tankPluginPath,
+                tankDataDirectory);
+            if (tankDetail is not null)
+            {
+                report?.Invoke(tankDetail);
+            }
 
             SlotIsolationInjector.Inject(processHandle);
             var isolationDetail = $"Slot {slotEnvironment.SlotId} settings are private.";
@@ -257,9 +288,12 @@ public static class ClientLauncher
                     }
                 });
             datLaunchLease = null;
+            addonLease.HoldUntilExit(process);
+            addonLease = null; // Ownership moved to the process-exit callback.
         }
         catch
         {
+            addonLease?.Dispose();
             datLaunchLease?.Dispose();
             workspaceLease?.Dispose();
             if (antiTamper is not null)

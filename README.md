@@ -113,6 +113,58 @@ Launcher features:
   `game.install.path`. The override rejects UNC/device/reparse paths, empty DATs,
   and any client outside the exact supported hashes before showing the launcher.
 
+### Optional Aeth-Tank add-on (1.0.45 candidate)
+
+Tools > Aeth-Tank add-on opens the optional add-on manager. Once a verified
+release is available, the launcher offers Install, Not now, and Don't ask again.
+Installation is optional, and Aeth-Tank's macro starts paused. The manager also
+supports updates, enable/disable for the next launch, rollback, and uninstall.
+Character settings are retained when changing versions or uninstalling.
+
+Aeth-Tank is a separately distributed proprietary native DLL. Its source,
+development tools, and binaries are not part of the launcher installer. A
+production launcher accepts only a signed release manifest from a compiled
+trusted key, an approved HTTPS download host, the exact package/file hashes,
+and a compatible signed native DLL. The release feed and public signing-key
+map are intentionally unconfigured in this candidate: it reports that the
+release is not yet available and does not download a placeholder package.
+
+The signed manifest records the protection provider as `vmprotect`, `themida`,
+or `xollvm`. These are distinct values; adding `xollvm` does not label its output
+as VMProtect or weaken any signature, hash, native-DLL, or compatibility check.
+The field is a signed publisher declaration about the build process. The
+launcher verifies the approved bytes and publisher, but cannot prove from that
+label or a file hash that obfuscation ran or how effective it is. The private
+release workflow must verify the chosen transformation before declaring the
+provider, then sign the final DLL and release manifest. Drafts and unsigned
+DLLs remain unavailable for managed installation.
+
+Runtime files live under
+%LocalAppData%\AetheriumPlay\Addons\AethTank\versions; stable character settings
+and logs live under the adjacent data directory. Only the launched managed
+client receives AETH_TANK_DATA_DIR. Install/update/rollback/remove operations
+require closed classic clients and an exclusive add-on lease. Every classic
+launch holds a shared lease until its process exits, including launches with
+the add-on disabled. If add-on storage is unavailable or invalid, Play skips
+the add-on and keeps ordinary launches available; an active install still
+blocks a conflicting launch. The verified DLL is held open against replacement.
+
+The old %USERPROFILE%\aeth-tank\private.enable shortcut is supported only in
+DEBUG or explicitly marked AETH_TANK_DEVELOPER_BUILD builds. Release builds
+cannot use that unsigned development shortcut. A managed disable or uninstall
+also suppresses it in development builds. Existing unrelated per-slot plugin
+registration is restored when Aeth-Tank is disabled.
+
+The independent release workflow lives in the private Aeth-Tank project.
+This candidate does not publish releases, create download credentials, or
+claim that an unsigned/unprotected draft is ready for players.
+
+Build.ps1 runs the offline add-on verification/recovery tests before publishing
+local build output. The optional UI regression command is
+AetheriumLauncher.PatchTests.exe --verify-addon-ui <output-directory>.
+The installer accepts a PublishDir preprocessor override so local candidates
+can be built from an isolated publish directory.
+
 ### Process-local DDD acceleration
 
 The launcher uses standard Windows process-memory APIs to install a handful of

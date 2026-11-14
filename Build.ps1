@@ -13,6 +13,7 @@ $projectRoot = $PSScriptRoot
 $versionFile = Join-Path $projectRoot "version.txt"
 $launcherProject = Join-Path $projectRoot "AetheriumLauncher\AetheriumLauncher.csproj"
 $patchTestsProject = Join-Path $projectRoot "AetheriumLauncher.PatchTests\AetheriumLauncher.PatchTests.csproj"
+$addonTestsProject = Join-Path $projectRoot "AetheriumLauncher.AddonTests\AetheriumLauncher.AddonTests.csproj"
 $installerScript = Join-Path $projectRoot "Installer\AetheriumPlay.iss"
 $installerOutput = Join-Path $projectRoot "artifacts\installer"
 
@@ -40,6 +41,16 @@ dotnet run `
     -p:AetheriumVersion=$version
 if ($LASTEXITCODE -ne 0) {
     throw "Native client patch tests failed with exit code $LASTEXITCODE."
+}
+
+Write-Host "Testing optional add-on release verification and recovery..."
+dotnet run `
+    --project $addonTestsProject `
+    -c $Configuration `
+    -r win-x86 `
+    -p:AetheriumVersion=$version
+if ($LASTEXITCODE -ne 0) {
+    throw "Optional add-on tests failed with exit code $LASTEXITCODE."
 }
 
 Write-Host "Publishing Aetherium Launcher..."

@@ -7,7 +7,9 @@
 #endif
 #define MyAppPublisher "Vanquish (aka Chosen One)"
 #define MyAppExeName "AetheriumLauncher.exe"
+#ifndef PublishDir
 #define PublishDir "..\AetheriumLauncher\bin\Release\net8.0-windows\win-x86\publish"
+#endif
 
 [Setup]
 AppId={{D235F19A-681F-4A65-9AC5-9FD3DB8C4D9F}
@@ -34,6 +36,7 @@ OutputBaseFilename=AetheriumPlaySetup
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Aetherium Play Setup
 VersionInfoProductName={#MyAppName}
+VersionInfoVersion={#MyAppVersion}.0
 VersionInfoProductVersion={#MyAppVersion}
 LicenseFile=AetheriumPlayAgreement.txt
 InfoBeforeFile=AetheriumPlaySources.txt
@@ -45,6 +48,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 Name: "skin\default"; Description: "&Default"; GroupDescription: "Launcher skin:"; Flags: exclusive
 Name: "skin\pk"; Description: "&PK"; GroupDescription: "Launcher skin:"; Flags: exclusive unchecked
+Name: "aethtank"; Description: "Install the optional &Aeth-Tank add-on (starts paused)"; GroupDescription: "Optional add-ons:"; Flags: unchecked
+Name: "unreal"; Description: "Download the optional &Unreal client (once, about 4 GB)"; GroupDescription: "Optional add-ons:"; Flags: unchecked
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -84,6 +89,10 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM aclauncher.exe"; StatusMs
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-community-client-from-file ""{param:COMMUNITYCLIENTFILE|}"" ""{code:GetGameInstallDir}"""; StatusMsg: "Installing and verifying the Dark Majesty client..."; Check: HasCommunityClientFile; BeforeInstall: EnsureGameInstallDir; AfterInstall: VerifyCommunityClient; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-community-client-with-progress ""{code:GetGameInstallDir}"""; StatusMsg: "Downloading and verifying the Dark Majesty client. On a slow connection this can take a few minutes..."; Check: not HasCommunityClientFile; BeforeInstall: EnsureGameInstallDir; AfterInstall: VerifyCommunityClient; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-aetherium-install ""{code:GetGameInstallDir}"" ""{code:GetSelectedSkin}"""; StatusMsg: "Configuring Aetherium Play for play.aetherium.ac:9000..."; BeforeInstall: EnsureGameInstallDir; AfterInstall: VerifyLauncherConfiguration; Flags: runhidden waituntilterminated
+; Add-ons live under the player's LocalAppData, so this runs as the original user, not the
+; elevated setup account. The exit code is not checked: no published release must not fail setup.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-aeth-tank"; StatusMsg: "Installing the optional Aeth-Tank add-on..."; Tasks: aethtank; Flags: runasoriginaluser runhidden waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-unreal"; StatusMsg: "Downloading the optional Unreal client. On a slow connection this can take a long time..."; Tasks: unreal; Flags: runasoriginaluser waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Aetherium Play"; Flags: nowait postinstall skipifsilent
 
 [Code]

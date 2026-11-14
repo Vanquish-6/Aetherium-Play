@@ -14,6 +14,9 @@ public static class UnrealClientLauncher
         try { if (File.Exists(marker)) candidates.Add(File.ReadAllText(marker).Trim()); }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+        candidates.Add(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AetheriumPlay", "Unreal", "Windows"));
         candidates.Add(@"C:\ACDM-Unreal\Windows");
         candidates.Add(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","Windows")));
         foreach (var candidate in candidates)
@@ -28,9 +31,11 @@ public static class UnrealClientLauncher
     public static string ResolveExecutable(string directory)
     {
         var root = Path.GetFullPath(directory);
-        foreach (var relative in new[] { @"ACDM\Binaries\Win64\ACDM.exe", @"Windows\ACDM\Binaries\Win64\ACDM.exe", @"Binaries\Win64\ACDM.exe" })
+        // Shipping builds name the game ACDM-Win64-Shipping.exe; Development builds use ACDM.exe.
+        foreach (var folder in new[] { @"ACDM\Binaries\Win64", @"Windows\ACDM\Binaries\Win64", @"Binaries\Win64" })
+        foreach (var name in new[] { "ACDM-Win64-Shipping.exe", "ACDM.exe" })
         {
-            var candidate = Path.Combine(root, relative);
+            var candidate = Path.Combine(root, folder, name);
             if (File.Exists(candidate)) return candidate;
         }
         throw new FileNotFoundException("Choose the installed Unreal client folder (containing ACDM.exe).");
@@ -83,27 +88,16 @@ public static class UnrealClientLauncher
         Directory.CreateDirectory(dataDirectory);
         using (SharedDatLaunchGate.AcquireWhenAvailable(dataDirectory, cancellationToken))
         {
-            foreach (var file in new[] { "portal.dat", "cell.dat" })
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var target = Path.Combine(dataDirectory, file);
-                if (!File.Exists(target))
-                {
-                    var pending = target + ".seed-" + Guid.NewGuid().ToString("N");
-                    try
-                    {
-                        File.Copy(Path.Combine(projectDirectory, "Data", file), pending);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        File.Move(pending, target);
-                    }
-                    finally { if (File.Exists(pending)) File.Delete(pending); }
-                }
-            }
+            SeedMissingDats(config, projectDirectory, dataDirectory, cancellationToken);
         }
         start.ArgumentList.Add($"-ACDMPortalDat={Path.Combine(dataDirectory, "portal.dat")}");
         start.ArgumentList.Add($"-ACDMCellDat={Path.Combine(dataDirectory, "cell.dat")}");
         cancellationToken.ThrowIfCancellationRequested();
-        var process = Process.Start(start) ?? throw new InvalidOperationException("Unable to start the Unreal client.");
+        Process process;
+        using (UnrealReleaseVerifier.OpenVerifiedExecutable(projectDirectory, start.FileName))
+        {
+            process = Process.Start(start) ?? throw new InvalidOperationException("Unable to start the Unreal client.");
+        }
         // A direct launch can offer a route back to this exact launcher.
         try
         {
@@ -120,5 +114,65 @@ public static class UnrealClientLauncher
             SlotId = config.SelectedSlotId,
             LaunchDetail = $"Unreal client: {(config.Port == 9100 ? "Red" : "White")}",
         };
+    }
+
+    private static readonly string[] DatFileNames = ["portal.dat", "cell.dat"];
+
+    /** Seeds a slot's base DAT pair once. Later server patches land as CLIDAT sidecars beside it. */
+    private static void SeedMissingDats(
+        LaunchConfig config, string projectDirectory, string dataDirectory, CancellationToken cancellationToken)
+    {
+        if (DatFileNames.All(file => File.Exists(Path.Combine(dataDirectory, file))))
+            return;
+
+        var classicInstall = config.InstallPath;
+        if (HasDatPair(classicInstall))
+        {
+            // A running classic client promotes patched DATs into this seed while holding the
+            // install's mutex. Copying without it can capture a half-written allocator.
+            using (SharedDatLaunchGate.AcquireWhenAvailable(classicInstall, cancellationToken))
+            {
+                ClientDatWorkspace.RecoverPendingSeedPromotion(classicInstall);
+                CopyMissingDats(classicInstall, dataDirectory, cancellationToken);
+            }
+            return;
+        }
+
+        var packagedData = Path.Combine(projectDirectory, "Data");
+        if (HasDatPair(packagedData))
+        {
+            CopyMissingDats(packagedData, dataDirectory, cancellationToken);
+            return;
+        }
+
+        throw new FileNotFoundException(
+            "The Unreal client needs portal.dat and cell.dat from your Dark Majesty game folder. " +
+            "Set the Dark Majesty folder in the launcher, start Classic once so it finishes patching, then try again.");
+    }
+
+    private static bool HasDatPair(string? directory) =>
+        !string.IsNullOrWhiteSpace(directory) &&
+        DatFileNames.All(file =>
+        {
+            var path = Path.Combine(directory, file);
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        });
+
+    private static void CopyMissingDats(string sourceDirectory, string dataDirectory, CancellationToken cancellationToken)
+    {
+        foreach (var file in DatFileNames)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var target = Path.Combine(dataDirectory, file);
+            if (File.Exists(target)) continue;
+            var pending = target + ".seed-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                File.Copy(Path.Combine(sourceDirectory, file), pending);
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(pending, target);
+            }
+            finally { if (File.Exists(pending)) File.Delete(pending); }
+        }
     }
 }

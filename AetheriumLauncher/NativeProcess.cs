@@ -71,15 +71,17 @@ internal static class NativeProcess
         string arguments,
         out IntPtr processHandle,
         out IntPtr threadHandle,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        IReadOnlyCollection<string>? removeEnvironmentVariables = null)
     {
         var commandLine = $"\"{clientPath}\" {arguments}".TrimEnd();
         var startupInfo = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
         var environmentBlock = IntPtr.Zero;
         var flags = CreateSuspended;
-        if (environment is not null)
+        if (environment is not null || removeEnvironmentVariables is not null)
         {
-            environmentBlock = CreateEnvironmentBlock(environment);
+            environmentBlock = Marshal.StringToHGlobalUni(BuildEnvironmentBlockText(
+                environment ?? new Dictionary<string, string>(), removeEnvironmentVariables));
             flags |= CreateUnicodeEnvironment;
         }
 
@@ -137,7 +139,9 @@ internal static class NativeProcess
         }
     }
 
-    private static IntPtr CreateEnvironmentBlock(IReadOnlyDictionary<string, string> overrides)
+    internal static string BuildEnvironmentBlockText(
+        IReadOnlyDictionary<string, string> overrides,
+        IReadOnlyCollection<string>? removals = null)
     {
         var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
@@ -148,13 +152,20 @@ internal static class NativeProcess
             }
         }
 
+        // Absence and an explicitly empty value have different meanings to
+        // native clients. Remove inherited variables before applying overrides.
+        if (removals is not null)
+        {
+            foreach (var key in removals) variables.Remove(key);
+        }
+
         foreach (var pair in overrides)
         {
             variables[pair.Key] = pair.Value;
         }
 
         var builder = new StringBuilder();
-        foreach (var pair in variables)
+        foreach (var pair in variables.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
             builder.Append(pair.Key);
             builder.Append('=');
@@ -163,7 +174,7 @@ internal static class NativeProcess
         }
 
         builder.Append('\0');
-        return Marshal.StringToHGlobalUni(builder.ToString());
+        return builder.ToString();
     }
 
     public static void ResumeAndClose(ref IntPtr processHandle, ref IntPtr threadHandle)
