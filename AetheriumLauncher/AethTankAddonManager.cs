@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -128,8 +129,7 @@ internal sealed class AethTankAddonManager
     internal async Task<AethTankRelease?> CheckForUpdateAsync(CancellationToken cancellationToken = default)
     {
         if (!ReleaseConfigured) return null;
-        var bytes = await DownloadBytesAsync(
-            new Uri(options.ManifestUrl), AethTankManifest.MaximumEnvelopeBytes, cancellationToken);
+        var bytes = await DownloadManifestAsync(cancellationToken);
         var release = AethTankManifest.Verify(bytes, options);
         var state = ReadState();
         return state.CurrentVersion is null ||
@@ -359,11 +359,34 @@ internal sealed class AethTankAddonManager
         return release;
     }
 
-    private async Task<byte[]> DownloadBytesAsync(Uri uri, int maximum, CancellationToken cancellationToken)
+    private async Task<byte[]> DownloadManifestAsync(CancellationToken cancellationToken)
     {
-        using var response = await http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+        using var response = await http.GetAsync(
+            new Uri(options.ManifestUrl), HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
+        // A missing file on the website falls through to the homepage. That page
+        // starts with '<' and is not a signed release.
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            throw new InvalidOperationException("Aeth-Tank release is not published yet.");
         response.EnsureSuccessStatusCode();
+        var bytes = await ReadBoundedAsync(
+            response, AethTankManifest.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+        if (LooksLikeHtml(bytes))
+            throw new InvalidOperationException("Aeth-Tank release is not published yet.");
+        return bytes;
+    }
+
+    private static bool LooksLikeHtml(ReadOnlySpan<byte> bytes)
+    {
+        var start = 0;
+        while (start < bytes.Length && bytes[start] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+            start++;
+        return start < bytes.Length && bytes[start] == (byte)'<';
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(
+        HttpResponseMessage response, int maximum, CancellationToken cancellationToken)
+    {
         if (response.Content.Headers.ContentLength is { } length && (length <= 0 || length > maximum))
             throw new InvalidDataException("The Aeth-Tank download has an invalid size.");
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);

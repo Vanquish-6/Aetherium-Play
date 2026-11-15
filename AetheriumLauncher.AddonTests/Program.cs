@@ -600,6 +600,12 @@ internal sealed class AddonTests
         }
         handler.Responses[Feed] = (HttpStatusCode.Redirect, []);
         await RejectAsync(async () => await manager.CheckForUpdateAsync(), "manifest redirect");
+        handler.Responses[Feed] = (HttpStatusCode.OK, "<!DOCTYPE html><title>Aetherium</title>"u8.ToArray());
+        await ThrowsAsync<InvalidOperationException>(async () => await manager.CheckForUpdateAsync(),
+            "website HTML is not a published release");
+        handler.Responses[Feed] = (HttpStatusCode.NotFound, []);
+        await ThrowsAsync<InvalidOperationException>(async () => await manager.CheckForUpdateAsync(),
+            "missing release is not a parser failure");
         handler.Responses[Feed] = (HttpStatusCode.OK, new byte[AethTankManifest.MaximumEnvelopeBytes + 1]);
         await RejectAsync(async () => await manager.CheckForUpdateAsync(), "oversized remote manifest");
         var unavailableHttp = new FakeHttp();
