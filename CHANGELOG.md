@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.47 - 2026-11-18
+
+### Fixed
+
+- The Aeth-Tank panel is drawn inside the client's fullscreen frame. The bottom chat stays usable, and the pointer stays visible over the panel.
+- A leftover fake-fullscreen graphics setting is cleared so the client can use its own fullscreen mode.
+
 ## 1.0.44 - 2026-10-24
 
 ### Added
