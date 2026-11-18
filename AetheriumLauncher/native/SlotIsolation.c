@@ -771,6 +771,667 @@ static BOOL WINAPI Hook_SHGetSpecialFolderPathW(HWND window, LPWSTR path, int cs
     return g_RealSHGetSpecialFolderPathW(window, path, csidl, create);
 }
 
+/* The plugin window is not part of Turbine's plugin interface. A visible
+   window stops native exclusive fullscreen and covers the chat bar. Keep that
+   window off the desktop and copy its paint into the DirectDraw frame. */
+typedef HRESULT (WINAPI *PFN_DirectDrawCreate)(void*, void**, void*);
+typedef HRESULT (WINAPI *PFN_DirectDrawCreateEx)(void*, void**, const GUID*, void*);
+typedef HRESULT (WINAPI *PFN_DdCreateSurface)(void*, void*, void**, void*);
+typedef HRESULT (WINAPI *PFN_DdSetCoop)(void*, HWND, DWORD);
+typedef HRESULT (WINAPI *PFN_DdGetAttached)(void*, void*, void**);
+typedef HRESULT (WINAPI *PFN_DdGetDC)(void*, HDC*);
+typedef HRESULT (WINAPI *PFN_DdReleaseDC)(void*, HDC);
+typedef HRESULT (WINAPI *PFN_DdFlip)(void*, void*, DWORD);
+typedef HWND (WINAPI *PFN_CreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
+typedef BOOL (WINAPI *PFN_ShowWindow)(HWND, int);
+typedef BOOL (WINAPI *PFN_SetWindowPos)(HWND, HWND, int, int, int, int, UINT);
+typedef HMODULE (WINAPI *PFN_LoadLibraryA)(LPCSTR);
+typedef HMODULE (WINAPI *PFN_LoadLibraryW)(LPCWSTR);
+
+static PFN_DirectDrawCreate g_RealDirectDrawCreate;
+static PFN_DirectDrawCreateEx g_RealDirectDrawCreateEx;
+static PFN_CreateWindowExW g_RealCreateWindowExW;
+static PFN_ShowWindow g_RealShowWindow;
+static PFN_SetWindowPos g_RealSetWindowPos;
+typedef BOOL (WINAPI *PFN_BitBlt)(HDC, int, int, int, int, HDC, int, int, DWORD);
+static PFN_BitBlt g_RealBitBlt;
+static HDC g_CacheDc;
+static HBITMAP g_CacheBmp;
+static int g_CacheW;
+static int g_CacheH;
+static int g_HaveCapture;
+static PFN_LoadLibraryA g_RealLoadLibraryA;
+static PFN_LoadLibraryW g_RealLoadLibraryW;
+static HWND g_GameWindow;
+static HWND g_PluginPanel;
+static HWND g_PluginTab;
+static int g_PanelShown = 1;
+static WNDPROC g_GameProc;
+typedef HRESULT (WINAPI *PFN_DdQuery)(void*, const GUID*, void**);
+typedef HRESULT (WINAPI *PFN_DdBlt)(void*, RECT*, void*, RECT*, DWORD, void*);
+static struct { void** vtbl; PFN_DdQuery query; PFN_DdCreateSurface createSurface; PFN_DdSetCoop setCoop; } g_DdHook[4];
+static struct { void** vtbl; PFN_DdFlip flip; PFN_DdBlt blt; } g_FlipHook[4];
+static void* g_PrimarySurface;
+static HRESULT WINAPI Hook_QueryInterface(void*, const GUID*, void**);
+static HRESULT WINAPI Hook_Blt(void*, RECT*, void*, RECT*, DWORD, void*);
+
+static HRESULT WINAPI Hook_DirectDrawCreate(void*, void**, void*);
+static HRESULT WINAPI Hook_DirectDrawCreateEx(void*, void**, const GUID*, void*);
+static HRESULT WINAPI Hook_CreateSurface(void*, void*, void**, void*);
+static HRESULT WINAPI Hook_SetCooperativeLevel(void*, HWND, DWORD);
+static HRESULT WINAPI Hook_Flip(void*, void*, DWORD);
+static HWND WINAPI Hook_CreateWindowExW(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
+static BOOL WINAPI Hook_ShowWindow(HWND, int);
+static BOOL WINAPI Hook_SetWindowPos(HWND, HWND, int, int, int, int, UINT);
+static BOOL WINAPI Hook_BitBlt(HDC, int, int, int, int, HDC, int, int, DWORD);
+static HMODULE WINAPI Hook_LoadLibraryA(LPCSTR);
+static HMODULE WINAPI Hook_LoadLibraryW(LPCWSTR);
+static LRESULT CALLBACK GameOverlayProc(HWND, UINT, WPARAM, LPARAM);
+
+static int PatchVtableSlot(void** vtbl, int slot, void* hook, void** saved)
+{
+    DWORD oldProtect;
+    if (vtbl == NULL || vtbl[slot] == hook)
+    {
+        return 1;
+    }
+
+    if (!VirtualProtect(&vtbl[slot], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect))
+    {
+        return 0;
+    }
+
+    if (saved != NULL && *saved == NULL)
+    {
+        *saved = vtbl[slot];
+    }
+
+    vtbl[slot] = hook;
+    VirtualProtect(&vtbl[slot], sizeof(void*), oldProtect, &oldProtect);
+    return 1;
+}
+
+static int PatchImport(HMODULE module, const char* dllName, const char* functionName, void* hook, void** original);
+static void PatchModuleWindowImports(HMODULE module)
+{
+    PatchImport(module, "USER32.dll", "CreateWindowExW", Hook_CreateWindowExW, (void**)&g_RealCreateWindowExW);
+    PatchImport(module, "USER32.dll", "ShowWindow", Hook_ShowWindow, (void**)&g_RealShowWindow);
+    PatchImport(module, "USER32.dll", "SetWindowPos", Hook_SetWindowPos, (void**)&g_RealSetWindowPos);
+    PatchImport(module, "GDI32.dll", "BitBlt", Hook_BitBlt, (void**)&g_RealBitBlt);
+}
+
+static void OverlayNote(const char* text);
+static void RememberPanel(HDC source, int width, int height)
+{
+    HDC screen;
+    if (source == NULL || g_RealBitBlt == NULL || width < 32 || height < 32 || width > 2000 || height > 2000)
+    {
+        return;
+    }
+
+    if (g_CacheDc == NULL || width != g_CacheW || height != g_CacheH)
+    {
+        if (g_CacheBmp != NULL)
+        {
+            DeleteObject(g_CacheBmp);
+            g_CacheBmp = NULL;
+        }
+
+        if (g_CacheDc != NULL)
+        {
+            DeleteDC(g_CacheDc);
+            g_CacheDc = NULL;
+        }
+
+        screen = GetDC(NULL);
+        g_CacheDc = CreateCompatibleDC(screen);
+        g_CacheBmp = CreateCompatibleBitmap(screen, width, height);
+        ReleaseDC(NULL, screen);
+        SelectObject(g_CacheDc, g_CacheBmp);
+        g_CacheW = width;
+        g_CacheH = height;
+    }
+
+    g_RealBitBlt(g_CacheDc, 0, 0, width, height, source, 0, 0, SRCCOPY);
+    if (!g_HaveCapture)
+    {
+        OverlayNote("captured panel paint");
+    }
+
+    g_HaveCapture = 1;
+}
+
+static BOOL WINAPI Hook_BitBlt(HDC dest, int x, int y, int width, int height, HDC source, int sourceX, int sourceY, DWORD rop)
+{
+    if (g_PluginPanel != NULL && dest != NULL && source != NULL && WindowFromDC(dest) == g_PluginPanel)
+    {
+        RememberPanel(source, width, height);
+    }
+
+    return g_RealBitBlt(dest, x, y, width, height, source, sourceX, sourceY, rop);
+}
+
+static void OverlayNote(const char* text)
+{
+    HANDLE file;
+    DWORD written;
+    char path[MAX_PATH];
+    if (GetTempPathA(MAX_PATH, path) == 0)
+    {
+        return;
+    }
+
+    lstrcatA(path, "aeth-overlay.log");
+    file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        return;
+    }
+
+    WriteFile(file, text, lstrlenA(text), &written, NULL);
+    WriteFile(file, "\r\n", 2, &written, NULL);
+    CloseHandle(file);
+}
+
+static void TrackArrow(void);
+static void DrawPluginInto(void* surface)
+{
+    void** vtbl;
+    HDC surfaceDc = NULL;
+    struct { DWORD caps; } backCaps;
+    void* back = NULL;
+    HRESULT dcResult;
+    TrackArrow();
+    if (g_PluginPanel == NULL || !g_PanelShown || !IsWindow(g_PluginPanel) || surface == NULL)
+    {
+        return;
+    }
+
+    vtbl = *(void***)surface;
+    backCaps.caps = 0x4;
+    if (((PFN_DdGetAttached)vtbl[12])(surface, &backCaps, &back) >= 0 && back != NULL)
+    {
+        surface = back;
+        vtbl = *(void***)surface;
+    }
+
+    dcResult = ((PFN_DdGetDC)vtbl[17])(surface, &surfaceDc);
+    if (dcResult < 0 || surfaceDc == NULL)
+    {
+        OverlayNote("surface GetDC failed");
+        return;
+    }
+
+    InvalidateRect(g_PluginPanel, NULL, FALSE);
+    UpdateWindow(g_PluginPanel);
+    if (!g_HaveCapture || g_CacheDc == NULL)
+    {
+        ((PFN_DdReleaseDC)vtbl[26])(surface, surfaceDc);
+        return;
+    }
+
+    BitBlt(surfaceDc, 8, 8, g_CacheW, g_CacheH, g_CacheDc, 0, 0, SRCCOPY);
+    ((PFN_DdReleaseDC)vtbl[26])(surface, surfaceDc);
+    (void)dcResult;
+}
+
+static void WrapPrimary(void* surface)
+{
+    void** vtbl;
+    int index;
+    if (surface == NULL)
+    {
+        return;
+    }
+
+    vtbl = *(void***)surface;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_FlipHook[index].vtbl == vtbl)
+        {
+            return;
+        }
+    }
+
+    for (index = 0; index < 4 && g_FlipHook[index].vtbl != NULL; index++)
+    {
+    }
+
+    if (index >= 4)
+    {
+        return;
+    }
+
+    g_FlipHook[index].vtbl = vtbl;
+    g_FlipHook[index].flip = (PFN_DdFlip)vtbl[11];
+    g_FlipHook[index].blt = (PFN_DdBlt)vtbl[5];
+    g_PrimarySurface = surface;
+    PatchVtableSlot(vtbl, 11, Hook_Flip, NULL);
+    PatchVtableSlot(vtbl, 5, Hook_Blt, NULL);
+    OverlayNote("wrapped primary surface");
+}
+
+static void WrapDirectDraw(void* object)
+{
+    void** vtbl;
+    int index;
+    if (object == NULL)
+    {
+        return;
+    }
+
+    vtbl = *(void***)object;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_DdHook[index].vtbl == vtbl)
+        {
+            return;
+        }
+    }
+
+    for (index = 0; index < 4 && g_DdHook[index].vtbl != NULL; index++)
+    {
+    }
+
+    if (index >= 4)
+    {
+        return;
+    }
+
+    g_DdHook[index].vtbl = vtbl;
+    g_DdHook[index].query = (PFN_DdQuery)vtbl[0];
+    g_DdHook[index].createSurface = (PFN_DdCreateSurface)vtbl[6];
+    g_DdHook[index].setCoop = (PFN_DdSetCoop)vtbl[20];
+    PatchVtableSlot(vtbl, 0, Hook_QueryInterface, NULL);
+    PatchVtableSlot(vtbl, 6, Hook_CreateSurface, NULL);
+    PatchVtableSlot(vtbl, 20, Hook_SetCooperativeLevel, NULL);
+    OverlayNote("wrapped directdraw");
+}
+
+static int SameGuid(const GUID* left, DWORD data1)
+{
+    return left != NULL && left->Data1 == data1;
+}
+
+static HRESULT WINAPI Hook_QueryInterface(void* self, const GUID* iid, void** out)
+{
+    void** vtbl = self == NULL ? NULL : *(void***)self;
+    PFN_DdQuery real = NULL;
+    HRESULT result;
+    int index;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_DdHook[index].vtbl == vtbl)
+        {
+            real = g_DdHook[index].query;
+        }
+    }
+
+    result = real == NULL ? E_FAIL : real(self, iid, out);
+    if (result >= 0 && out != NULL && *out != NULL &&
+        (SameGuid(iid, 0x6C14DB80u) || SameGuid(iid, 0xB3A6F3E0u) ||
+         SameGuid(iid, 0x9C59509Au) || SameGuid(iid, 0x15E65EC0u)))
+    {
+        WrapDirectDraw(*out);
+    }
+
+    return result;
+}
+
+static HRESULT WINAPI Hook_Blt(void* self, RECT* dest, void* source, RECT* sourceRect, DWORD flags, void* fx)
+{
+    void** vtbl = self == NULL ? NULL : *(void***)self;
+    PFN_DdBlt real = NULL;
+    int index;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_FlipHook[index].vtbl == vtbl)
+        {
+            real = g_FlipHook[index].blt;
+        }
+    }
+
+    if (self == g_PrimarySurface || source == g_PrimarySurface)
+    {
+        DrawPluginInto(source != NULL ? source : self);
+    }
+
+    return real == NULL ? E_FAIL : real(self, dest, source, sourceRect, flags, fx);
+}
+
+static HRESULT WINAPI Hook_Flip(void* self, void* target, DWORD flags)
+{
+    void** vtbl = self == NULL ? NULL : *(void***)self;
+    PFN_DdFlip real = NULL;
+    int index;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_FlipHook[index].vtbl == vtbl)
+        {
+            real = g_FlipHook[index].flip;
+        }
+    }
+
+    DrawPluginInto(self);
+    return real == NULL ? E_FAIL : real(self, target, flags);
+}
+
+static HRESULT WINAPI Hook_CreateSurface(void* self, void* desc, void** surface, void* outer)
+{
+    void** vtbl = self == NULL ? NULL : *(void***)self;
+    PFN_DdCreateSurface real = NULL;
+    HRESULT result;
+    int index;
+    DWORD flags = 0;
+    DWORD caps = 0;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_DdHook[index].vtbl == vtbl)
+        {
+            real = g_DdHook[index].createSurface;
+        }
+    }
+
+    result = real == NULL ? E_FAIL : real(self, desc, surface, outer);
+    if (result >= 0 && desc != NULL && surface != NULL && *surface != NULL)
+    {
+        flags = *(DWORD*)((BYTE*)desc + 4);
+        caps = *(DWORD*)((BYTE*)desc + 104);
+        if ((flags & 1u) != 0 && (caps & 0x200u) != 0)
+        {
+            WrapPrimary(*surface);
+        }
+        else
+        {
+            char note[80];
+            wsprintfA(note, "surface flags=%08lX caps=%08lX", flags, caps);
+            OverlayNote(note);
+        }
+    }
+
+    return result;
+}
+
+static void AttachGameWindow(HWND window)
+{
+    if (window == NULL || !IsWindow(window) || g_GameWindow == window)
+    {
+        return;
+    }
+
+    g_GameWindow = window;
+    g_GameProc = (WNDPROC)SetWindowLongPtrW(window, GWLP_WNDPROC, (LONG_PTR)GameOverlayProc);
+}
+
+static int g_ArrowHeld;
+static HCURSOR g_Arrow;
+
+static int OverPanel(int x, int y, int* localX, int* localY)
+{
+    RECT bounds;
+    int width;
+    int height;
+    if (g_PluginPanel == NULL || !g_PanelShown || !IsWindow(g_PluginPanel) || !GetWindowRect(g_PluginPanel, &bounds))
+    {
+        return 0;
+    }
+
+    width = bounds.right - bounds.left;
+    height = bounds.bottom - bounds.top;
+    if (localX != NULL)
+    {
+        *localX = x - 8;
+    }
+
+    if (localY != NULL)
+    {
+        *localY = y - 8;
+    }
+
+    return x >= 8 && y >= 8 && x < 8 + width && y < 8 + height;
+}
+
+static void HoldArrow(void)
+{
+    int guard = 0;
+    if (g_Arrow == NULL)
+    {
+        g_Arrow = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
+    }
+
+    SetCursor(g_Arrow);
+    if (!g_ArrowHeld)
+    {
+        while (ShowCursor(TRUE) < 0 && guard < 32)
+        {
+            guard++;
+        }
+
+        g_ArrowHeld = 1;
+    }
+}
+
+static void ReleaseArrow(void)
+{
+    int guard = 0;
+    if (!g_ArrowHeld)
+    {
+        return;
+    }
+
+    while (ShowCursor(FALSE) >= 0 && guard < 32)
+    {
+        guard++;
+    }
+
+    g_ArrowHeld = 0;
+}
+
+static void TrackArrow(void)
+{
+    POINT point;
+    if (g_GameWindow == NULL || !GetCursorPos(&point))
+    {
+        return;
+    }
+
+    ScreenToClient(g_GameWindow, &point);
+    if (OverPanel(point.x, point.y, NULL, NULL))
+    {
+        HoldArrow();
+    }
+    else
+    {
+        ReleaseArrow();
+    }
+}
+
+static LRESULT CALLBACK GameOverlayProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    POINT point;
+    int localX;
+    int localY;
+    int over;
+    if (g_PluginPanel != NULL && g_PanelShown &&
+        (message == WM_MOUSEMOVE || message == WM_SETCURSOR ||
+         message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK ||
+         message == WM_LBUTTONUP || message == WM_MOUSEWHEEL))
+    {
+        if (message == WM_SETCURSOR)
+        {
+            if (!GetCursorPos(&point))
+            {
+                return CallWindowProcW(g_GameProc, window, message, wparam, lparam);
+            }
+
+            ScreenToClient(window, &point);
+        }
+        else if (message == WM_MOUSEWHEEL)
+        {
+            point.x = (short)LOWORD(lparam);
+            point.y = (short)HIWORD(lparam);
+            ScreenToClient(window, &point);
+        }
+        else
+        {
+            point.x = (short)LOWORD(lparam);
+            point.y = (short)HIWORD(lparam);
+        }
+
+        over = OverPanel(point.x, point.y, &localX, &localY);
+        if (over)
+        {
+            HoldArrow();
+            if (message != WM_SETCURSOR)
+            {
+                SendMessageW(g_PluginPanel, message, wparam, MAKELPARAM(localX, localY));
+            }
+
+            return message == WM_SETCURSOR ? TRUE : 0;
+        }
+
+        ReleaseArrow();
+    }
+
+    return CallWindowProcW(g_GameProc, window, message, wparam, lparam);
+}
+
+static HRESULT WINAPI Hook_SetCooperativeLevel(void* self, HWND window, DWORD flags)
+{
+    void** vtbl = self == NULL ? NULL : *(void***)self;
+    PFN_DdSetCoop real = NULL;
+    int index;
+    for (index = 0; index < 4; index++)
+    {
+        if (g_DdHook[index].vtbl == vtbl)
+        {
+            real = g_DdHook[index].setCoop;
+        }
+    }
+
+    AttachGameWindow(window);
+    return real == NULL ? E_FAIL : real(self, window, flags);
+}
+
+static HRESULT WINAPI Hook_DirectDrawCreate(void* guid, void** out, void* outer)
+{
+    HRESULT result = g_RealDirectDrawCreate == NULL ? E_FAIL : g_RealDirectDrawCreate(guid, out, outer);
+    if (result >= 0 && out != NULL && *out != NULL)
+    {
+        WrapDirectDraw(*out);
+    }
+
+    return result;
+}
+
+static HRESULT WINAPI Hook_DirectDrawCreateEx(void* guid, void** out, const GUID* iid, void* outer)
+{
+    HRESULT result = g_RealDirectDrawCreateEx == NULL ? E_FAIL : g_RealDirectDrawCreateEx(guid, out, iid, outer);
+    if (result >= 0 && out != NULL && *out != NULL)
+    {
+        WrapDirectDraw(*out);
+    }
+
+    return result;
+}
+
+static int IsPluginWindowClass(LPCWSTR className)
+{
+    return className != NULL && ((ULONG_PTR)className >> 16) != 0 &&
+        (lstrcmpiW(className, L"AethTankPanel") == 0 || lstrcmpiW(className, L"AethTankTab") == 0);
+}
+
+static HWND WINAPI Hook_CreateWindowExW(
+    DWORD exStyle, LPCWSTR className, LPCWSTR windowName, DWORD style,
+    int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
+{
+    int pluginWindow = IsPluginWindowClass(className);
+    HWND created;
+    if (pluginWindow)
+    {
+        exStyle = (exStyle & ~0x8u) | 0x08000080u;
+        style &= ~WS_VISIBLE;
+        parent = NULL;
+        x = -32000;
+        y = -32000;
+    }
+
+    created = g_RealCreateWindowExW(
+        exStyle, className, windowName, style, x, y, width, height, parent, menu, instance, param);
+    if (pluginWindow && created != NULL)
+    {
+        if (lstrcmpiW(className, L"AethTankPanel") == 0)
+        {
+            g_PluginPanel = created;
+            g_PanelShown = 1;
+            OverlayNote("captured plugin panel");
+        }
+        else
+        {
+            g_PluginTab = created;
+        }
+    }
+
+    return created;
+}
+
+static BOOL WINAPI Hook_ShowWindow(HWND window, int command)
+{
+    if (window == g_PluginPanel || window == g_PluginTab)
+    {
+        if (window == g_PluginPanel)
+        {
+            g_PanelShown = command != SW_HIDE;
+        }
+
+        if (command == SW_HIDE)
+        {
+            return g_RealShowWindow(window, SW_HIDE);
+        }
+
+        /* Shown, but off the monitor, so exclusive fullscreen and the chat bar stay intact. */
+        g_RealSetWindowPos(window, NULL, -32000, -32000, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        return g_RealShowWindow(window, SW_SHOWNA);
+    }
+
+    return g_RealShowWindow(window, command);
+}
+
+static BOOL WINAPI Hook_SetWindowPos(HWND window, HWND insertAfter, int x, int y, int width, int height, UINT flags)
+{
+    if (window == g_PluginPanel || window == g_PluginTab)
+    {
+        x = -32000;
+        y = -32000;
+        flags = (flags | SWP_NOACTIVATE | SWP_NOZORDER) & ~SWP_SHOWWINDOW;
+    }
+
+    return g_RealSetWindowPos(window, insertAfter, x, y, width, height, flags);
+}
+
+static void PatchLoadedModule(HMODULE module)
+{
+    if (module != NULL)
+    {
+        PatchModuleWindowImports(module);
+    }
+}
+
+static HMODULE WINAPI Hook_LoadLibraryA(LPCSTR fileName)
+{
+    HMODULE module = g_RealLoadLibraryA(fileName);
+    PatchLoadedModule(module);
+    return module;
+}
+
+static HMODULE WINAPI Hook_LoadLibraryW(LPCWSTR fileName)
+{
+    HMODULE module = g_RealLoadLibraryW(fileName);
+    PatchLoadedModule(module);
+    return module;
+}
+
 static FARPROC WINAPI Hook_GetProcAddress(HMODULE module, LPCSTR name)
 {
     FARPROC resolved = g_RealGetProcAddress(module, name);
@@ -797,6 +1458,26 @@ static FARPROC WINAPI Hook_GetProcAddress(HMODULE module, LPCSTR name)
     if (lstrcmpiA(name, "SHGetSpecialFolderPathW") == 0)
     {
         return (FARPROC)Hook_SHGetSpecialFolderPathW;
+    }
+
+    if (lstrcmpiA(name, "DirectDrawCreate") == 0)
+    {
+        if (g_RealDirectDrawCreate == NULL)
+        {
+            g_RealDirectDrawCreate = (PFN_DirectDrawCreate)resolved;
+        }
+
+        return (FARPROC)Hook_DirectDrawCreate;
+    }
+
+    if (lstrcmpiA(name, "DirectDrawCreateEx") == 0)
+    {
+        if (g_RealDirectDrawCreateEx == NULL)
+        {
+            g_RealDirectDrawCreateEx = (PFN_DirectDrawCreateEx)resolved;
+        }
+
+        return (FARPROC)Hook_DirectDrawCreateEx;
     }
 
     return resolved;
@@ -962,6 +1643,11 @@ static int InstallHooks(void)
     PatchImport(client, "KERNEL32.dll", "CreateSemaphoreA", Hook_CreateSemaphoreA, (void**)&g_RealCreateSemaphoreA);
     PatchImport(client, "KERNEL32.dll", "CreateMutexA", Hook_CreateMutexA, (void**)&g_RealCreateMutexA);
     PatchImport(client, "KERNEL32.dll", "GetProcAddress", Hook_GetProcAddress, (void**)&g_RealGetProcAddress);
+    PatchImport(client, "KERNEL32.dll", "LoadLibraryA", Hook_LoadLibraryA, (void**)&g_RealLoadLibraryA);
+    PatchImport(client, "KERNEL32.dll", "LoadLibraryW", Hook_LoadLibraryW, (void**)&g_RealLoadLibraryW);
+    PatchImport(client, "ddraw.dll", "DirectDrawCreate", Hook_DirectDrawCreate, (void**)&g_RealDirectDrawCreate);
+    PatchImport(client, "ddraw.dll", "DirectDrawCreateEx", Hook_DirectDrawCreateEx, (void**)&g_RealDirectDrawCreateEx);
+    PatchModuleWindowImports(client);
     g_installed = 1;
     return 1;
 }

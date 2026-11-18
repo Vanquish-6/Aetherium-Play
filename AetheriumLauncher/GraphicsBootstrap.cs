@@ -393,6 +393,8 @@ internal static class GraphicsBootstrap
     /// <summary>
     /// 1.0.36 wrote fake fullscreen and turned Alt+Enter off. That kept the
     /// game at 800x600. Put those lines back when that value is still present.
+    /// Native fullscreen is the client's own mode. Do not replace it with a
+    /// borderless window; that mode covers the chat bar.
     /// </summary>
     internal static void RestoreDisplayModeBefore136(string workingDirectory)
     {
@@ -416,6 +418,14 @@ internal static class GraphicsBootstrap
             if (IsConfigKey(line, "FullscreenAttributes"))
             {
                 updated = SetConfigValue(line, "FullscreenAttributes", string.Empty);
+            }
+            else if (IsConfigKey(line, "WindowedAttributes"))
+            {
+                updated = SetConfigValue(line, "WindowedAttributes", string.Empty);
+            }
+            else if (IsConfigKey(line, "ScalingMode"))
+            {
+                updated = SetConfigValue(line, "ScalingMode", "unspecified");
             }
             else if (IsConfigKey(line, "DisableAltEnterToToggleScreenMode"))
             {
