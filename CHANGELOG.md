@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.48 - 2026-11-20
+
+### Fixed
+
+- Dragging the title bar and resizing any edge of the Aeth-Tank panel now work inside native fullscreen while keeping the real Win32 windows parked off-screen so exclusive fullscreen and the chat bar stay intact.
+- Resize cursors appear on panel borders, mousewheel scrolling forwards accurate screen coordinates, and the minimized `AT` button renders and reopens the panel when clicked.
+
 ## 1.0.47 - 2026-11-18
 
 ### Fixed

@@ -785,6 +785,11 @@ typedef HRESULT (WINAPI *PFN_DdFlip)(void*, void*, DWORD);
 typedef HWND (WINAPI *PFN_CreateWindowExW)(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
 typedef BOOL (WINAPI *PFN_ShowWindow)(HWND, int);
 typedef BOOL (WINAPI *PFN_SetWindowPos)(HWND, HWND, int, int, int, int, UINT);
+typedef BOOL (WINAPI *PFN_GetWindowRect)(HWND, LPRECT);
+typedef BOOL (WINAPI *PFN_ScreenToClient)(HWND, LPPOINT);
+typedef HWND (WINAPI *PFN_SetCapture)(HWND);
+typedef BOOL (WINAPI *PFN_ReleaseCapture)(void);
+typedef HCURSOR (WINAPI *PFN_SetCursor)(HCURSOR);
 typedef HMODULE (WINAPI *PFN_LoadLibraryA)(LPCSTR);
 typedef HMODULE (WINAPI *PFN_LoadLibraryW)(LPCWSTR);
 
@@ -793,6 +798,11 @@ static PFN_DirectDrawCreateEx g_RealDirectDrawCreateEx;
 static PFN_CreateWindowExW g_RealCreateWindowExW;
 static PFN_ShowWindow g_RealShowWindow;
 static PFN_SetWindowPos g_RealSetWindowPos;
+static PFN_GetWindowRect g_RealGetWindowRect;
+static PFN_ScreenToClient g_RealScreenToClient;
+static PFN_SetCapture g_RealSetCapture;
+static PFN_ReleaseCapture g_RealReleaseCapture;
+static PFN_SetCursor g_RealSetCursor;
 typedef BOOL (WINAPI *PFN_BitBlt)(HDC, int, int, int, int, HDC, int, int, DWORD);
 static PFN_BitBlt g_RealBitBlt;
 static HDC g_CacheDc;
@@ -800,12 +810,27 @@ static HBITMAP g_CacheBmp;
 static int g_CacheW;
 static int g_CacheH;
 static int g_HaveCapture;
+static HDC g_TabCacheDc;
+static HBITMAP g_TabCacheBmp;
+static int g_TabCacheW;
+static int g_TabCacheH;
+static int g_HaveTabCapture;
 static PFN_LoadLibraryA g_RealLoadLibraryA;
 static PFN_LoadLibraryW g_RealLoadLibraryW;
 static HWND g_GameWindow;
 static HWND g_PluginPanel;
 static HWND g_PluginTab;
 static int g_PanelShown = 1;
+static int g_TabShown;
+static int g_PanelX = 8;
+static int g_PanelY = 48;
+static int g_TabX = 8;
+static int g_TabY = 8;
+static int g_PanelIsChild;
+static int g_TabIsChild;
+static int g_InPluginCursorMsg;
+static HWND g_PluginCapture;
+static HCURSOR g_PluginCursor;
 static WNDPROC g_GameProc;
 typedef HRESULT (WINAPI *PFN_DdQuery)(void*, const GUID*, void**);
 typedef HRESULT (WINAPI *PFN_DdBlt)(void*, RECT*, void*, RECT*, DWORD, void*);
@@ -823,6 +848,11 @@ static HRESULT WINAPI Hook_Flip(void*, void*, DWORD);
 static HWND WINAPI Hook_CreateWindowExW(DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
 static BOOL WINAPI Hook_ShowWindow(HWND, int);
 static BOOL WINAPI Hook_SetWindowPos(HWND, HWND, int, int, int, int, UINT);
+static BOOL WINAPI Hook_GetWindowRect(HWND, LPRECT);
+static BOOL WINAPI Hook_ScreenToClient(HWND, LPPOINT);
+static HWND WINAPI Hook_SetCapture(HWND);
+static BOOL WINAPI Hook_ReleaseCapture(void);
+static HCURSOR WINAPI Hook_SetCursor(HCURSOR);
 static BOOL WINAPI Hook_BitBlt(HDC, int, int, int, int, HDC, int, int, DWORD);
 static HMODULE WINAPI Hook_LoadLibraryA(LPCSTR);
 static HMODULE WINAPI Hook_LoadLibraryW(LPCWSTR);
@@ -857,55 +887,68 @@ static void PatchModuleWindowImports(HMODULE module)
     PatchImport(module, "USER32.dll", "CreateWindowExW", Hook_CreateWindowExW, (void**)&g_RealCreateWindowExW);
     PatchImport(module, "USER32.dll", "ShowWindow", Hook_ShowWindow, (void**)&g_RealShowWindow);
     PatchImport(module, "USER32.dll", "SetWindowPos", Hook_SetWindowPos, (void**)&g_RealSetWindowPos);
+    PatchImport(module, "USER32.dll", "GetWindowRect", Hook_GetWindowRect, (void**)&g_RealGetWindowRect);
+    PatchImport(module, "USER32.dll", "ScreenToClient", Hook_ScreenToClient, (void**)&g_RealScreenToClient);
+    PatchImport(module, "USER32.dll", "SetCapture", Hook_SetCapture, (void**)&g_RealSetCapture);
+    PatchImport(module, "USER32.dll", "ReleaseCapture", Hook_ReleaseCapture, (void**)&g_RealReleaseCapture);
+    PatchImport(module, "USER32.dll", "SetCursor", Hook_SetCursor, (void**)&g_RealSetCursor);
     PatchImport(module, "GDI32.dll", "BitBlt", Hook_BitBlt, (void**)&g_RealBitBlt);
 }
 
 static void OverlayNote(const char* text);
-static void RememberPanel(HDC source, int width, int height)
+static void RememberBitmap(HDC source, int width, int height, HDC* cacheDc, HBITMAP* cacheBmp, int* cacheW, int* cacheH, int* haveCapture, const char* note)
 {
     HDC screen;
-    if (source == NULL || g_RealBitBlt == NULL || width < 32 || height < 32 || width > 2000 || height > 2000)
+    if (source == NULL || g_RealBitBlt == NULL || width < 16 || height < 16 || width > 2000 || height > 2000)
     {
         return;
     }
 
-    if (g_CacheDc == NULL || width != g_CacheW || height != g_CacheH)
+    if (*cacheDc == NULL || width != *cacheW || height != *cacheH)
     {
-        if (g_CacheBmp != NULL)
+        if (*cacheBmp != NULL)
         {
-            DeleteObject(g_CacheBmp);
-            g_CacheBmp = NULL;
+            DeleteObject(*cacheBmp);
+            *cacheBmp = NULL;
         }
 
-        if (g_CacheDc != NULL)
+        if (*cacheDc != NULL)
         {
-            DeleteDC(g_CacheDc);
-            g_CacheDc = NULL;
+            DeleteDC(*cacheDc);
+            *cacheDc = NULL;
         }
 
         screen = GetDC(NULL);
-        g_CacheDc = CreateCompatibleDC(screen);
-        g_CacheBmp = CreateCompatibleBitmap(screen, width, height);
+        *cacheDc = CreateCompatibleDC(screen);
+        *cacheBmp = CreateCompatibleBitmap(screen, width, height);
         ReleaseDC(NULL, screen);
-        SelectObject(g_CacheDc, g_CacheBmp);
-        g_CacheW = width;
-        g_CacheH = height;
+        SelectObject(*cacheDc, *cacheBmp);
+        *cacheW = width;
+        *cacheH = height;
     }
 
-    g_RealBitBlt(g_CacheDc, 0, 0, width, height, source, 0, 0, SRCCOPY);
-    if (!g_HaveCapture)
+    g_RealBitBlt(*cacheDc, 0, 0, width, height, source, 0, 0, SRCCOPY);
+    if (!*haveCapture && note != NULL)
     {
-        OverlayNote("captured panel paint");
+        OverlayNote(note);
     }
 
-    g_HaveCapture = 1;
+    *haveCapture = 1;
 }
 
 static BOOL WINAPI Hook_BitBlt(HDC dest, int x, int y, int width, int height, HDC source, int sourceX, int sourceY, DWORD rop)
 {
-    if (g_PluginPanel != NULL && dest != NULL && source != NULL && WindowFromDC(dest) == g_PluginPanel)
+    HWND target = dest != NULL ? WindowFromDC(dest) : NULL;
+    if (source != NULL && target != NULL)
     {
-        RememberPanel(source, width, height);
+        if (g_PluginPanel != NULL && target == g_PluginPanel)
+        {
+            RememberBitmap(source, width, height, &g_CacheDc, &g_CacheBmp, &g_CacheW, &g_CacheH, &g_HaveCapture, "captured panel paint");
+        }
+        else if (g_PluginTab != NULL && target == g_PluginTab)
+        {
+            RememberBitmap(source, width, height, &g_TabCacheDc, &g_TabCacheBmp, &g_TabCacheW, &g_TabCacheH, &g_HaveTabCapture, "captured tab paint");
+        }
     }
 
     return g_RealBitBlt(dest, x, y, width, height, source, sourceX, sourceY, rop);
@@ -934,6 +977,31 @@ static void OverlayNote(const char* text)
 }
 
 static void TrackArrow(void);
+static void ClampOverlayPos(int* x, int* y, int width, int height)
+{
+    RECT client;
+    int cw;
+    int ch;
+    if (g_GameWindow == NULL || !IsWindow(g_GameWindow) || !GetClientRect(g_GameWindow, &client))
+    {
+        return;
+    }
+
+    cw = client.right - client.left;
+    ch = client.bottom - client.top;
+    if (cw > 0 && width > 0 && cw >= width)
+    {
+        if (*x + width > cw) *x = cw - width;
+        if (*x < 0) *x = 0;
+    }
+
+    if (ch > 0 && height > 0 && ch >= height)
+    {
+        if (*y + height > ch) *y = ch - height;
+        if (*y < 0) *y = 0;
+    }
+}
+
 static void DrawPluginInto(void* surface)
 {
     void** vtbl;
@@ -941,8 +1009,27 @@ static void DrawPluginInto(void* surface)
     struct { DWORD caps; } backCaps;
     void* back = NULL;
     HRESULT dcResult;
+    HWND activeWindow = NULL;
+    HDC activeCacheDc = NULL;
+    int activeW = 0;
+    int activeH = 0;
+    int drawX = 0;
+    int drawY = 0;
     TrackArrow();
-    if (g_PluginPanel == NULL || !g_PanelShown || !IsWindow(g_PluginPanel) || surface == NULL)
+    if (surface == NULL)
+    {
+        return;
+    }
+
+    if (g_PluginPanel != NULL && g_PanelShown && IsWindow(g_PluginPanel))
+    {
+        activeWindow = g_PluginPanel;
+    }
+    else if (g_PluginTab != NULL && g_TabShown && IsWindow(g_PluginTab))
+    {
+        activeWindow = g_PluginTab;
+    }
+    else
     {
         return;
     }
@@ -962,15 +1049,40 @@ static void DrawPluginInto(void* surface)
         return;
     }
 
-    InvalidateRect(g_PluginPanel, NULL, FALSE);
-    UpdateWindow(g_PluginPanel);
-    if (!g_HaveCapture || g_CacheDc == NULL)
+    InvalidateRect(activeWindow, NULL, FALSE);
+    UpdateWindow(activeWindow);
+    if (activeWindow == g_PluginPanel)
+    {
+        if (g_HaveCapture && g_CacheDc != NULL)
+        {
+            activeCacheDc = g_CacheDc;
+            activeW = g_CacheW;
+            activeH = g_CacheH;
+            ClampOverlayPos(&g_PanelX, &g_PanelY, activeW, activeH);
+            drawX = g_PanelX;
+            drawY = g_PanelY;
+        }
+    }
+    else
+    {
+        if (g_HaveTabCapture && g_TabCacheDc != NULL)
+        {
+            activeCacheDc = g_TabCacheDc;
+            activeW = g_TabCacheW;
+            activeH = g_TabCacheH;
+            ClampOverlayPos(&g_TabX, &g_TabY, activeW, activeH);
+            drawX = g_TabX;
+            drawY = g_TabY;
+        }
+    }
+
+    if (activeCacheDc == NULL)
     {
         ((PFN_DdReleaseDC)vtbl[26])(surface, surfaceDc);
         return;
     }
 
-    BitBlt(surfaceDc, 8, 8, g_CacheW, g_CacheH, g_CacheDc, 0, 0, SRCCOPY);
+    BitBlt(surfaceDc, drawX, drawY, activeW, activeH, activeCacheDc, 0, 0, SRCCOPY);
     ((PFN_DdReleaseDC)vtbl[26])(surface, surfaceDc);
     (void)dcResult;
 }
@@ -1165,33 +1277,82 @@ static void AttachGameWindow(HWND window)
 
 static int g_ArrowHeld;
 static HCURSOR g_Arrow;
+static HCURSOR g_HandCursor;
 
-static int OverPanel(int x, int y, int* localX, int* localY)
+static void GameClientOrigin(POINT* origin)
 {
+    origin->x = 0;
+    origin->y = 0;
+    if (g_GameWindow != NULL && IsWindow(g_GameWindow))
+    {
+        ClientToScreen(g_GameWindow, origin);
+    }
+}
+
+static int RealWindowSize(HWND window, int* outW, int* outH)
+{
+    RECT client;
     RECT bounds;
-    int width;
-    int height;
-    if (g_PluginPanel == NULL || !g_PanelShown || !IsWindow(g_PluginPanel) || !GetWindowRect(g_PluginPanel, &bounds))
+    if (window == NULL || !IsWindow(window))
     {
         return 0;
     }
 
-    width = bounds.right - bounds.left;
-    height = bounds.bottom - bounds.top;
-    if (localX != NULL)
+    if (GetClientRect(window, &client) && client.right > 0 && client.bottom > 0)
     {
-        *localX = x - 8;
+        *outW = client.right - client.left;
+        *outH = client.bottom - client.top;
+        return 1;
     }
 
-    if (localY != NULL)
+    if ((g_RealGetWindowRect != NULL ? g_RealGetWindowRect(window, &bounds) : GetWindowRect(window, &bounds)))
     {
-        *localY = y - 8;
+        *outW = bounds.right - bounds.left;
+        *outH = bounds.bottom - bounds.top;
+        return *outW > 0 && *outH > 0;
     }
 
-    return x >= 8 && y >= 8 && x < 8 + width && y < 8 + height;
+    return 0;
 }
 
-static void HoldArrow(void)
+static HWND ActiveOverlayTarget(int x, int y, int* localX, int* localY)
+{
+    int width = 0;
+    int height = 0;
+    if (g_PluginCapture != NULL && IsWindow(g_PluginCapture))
+    {
+        int baseX = g_PluginCapture == g_PluginTab ? g_TabX : g_PanelX;
+        int baseY = g_PluginCapture == g_PluginTab ? g_TabY : g_PanelY;
+        if (localX != NULL) *localX = x - baseX;
+        if (localY != NULL) *localY = y - baseY;
+        return g_PluginCapture;
+    }
+
+    if (g_PluginPanel != NULL && g_PanelShown && IsWindow(g_PluginPanel) && RealWindowSize(g_PluginPanel, &width, &height))
+    {
+        ClampOverlayPos(&g_PanelX, &g_PanelY, width, height);
+        if (x >= g_PanelX && y >= g_PanelY && x < g_PanelX + width && y < g_PanelY + height)
+        {
+            if (localX != NULL) *localX = x - g_PanelX;
+            if (localY != NULL) *localY = y - g_PanelY;
+            return g_PluginPanel;
+        }
+    }
+    else if (g_PluginTab != NULL && g_TabShown && IsWindow(g_PluginTab) && RealWindowSize(g_PluginTab, &width, &height))
+    {
+        ClampOverlayPos(&g_TabX, &g_TabY, width, height);
+        if (x >= g_TabX && y >= g_TabY && x < g_TabX + width && y < g_TabY + height)
+        {
+            if (localX != NULL) *localX = x - g_TabX;
+            if (localY != NULL) *localY = y - g_TabY;
+            return g_PluginTab;
+        }
+    }
+
+    return NULL;
+}
+
+static void EnsureOverlayCursor(HCURSOR cursor)
 {
     int guard = 0;
     if (g_Arrow == NULL)
@@ -1199,7 +1360,15 @@ static void HoldArrow(void)
         g_Arrow = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));
     }
 
-    SetCursor(g_Arrow);
+    if (g_RealSetCursor != NULL)
+    {
+        g_RealSetCursor(cursor != NULL ? cursor : g_Arrow);
+    }
+    else
+    {
+        SetCursor(cursor != NULL ? cursor : g_Arrow);
+    }
+
     if (!g_ArrowHeld)
     {
         while (ShowCursor(TRUE) < 0 && guard < 32)
@@ -1214,6 +1383,7 @@ static void HoldArrow(void)
 static void ReleaseArrow(void)
 {
     int guard = 0;
+    g_PluginCursor = NULL;
     if (!g_ArrowHeld)
     {
         return;
@@ -1227,18 +1397,54 @@ static void ReleaseArrow(void)
     g_ArrowHeld = 0;
 }
 
+static void UpdateOverlayCursor(HWND target)
+{
+    HCURSOR chosen = NULL;
+    if (target == g_PluginPanel)
+    {
+        g_PluginCursor = NULL;
+        g_InPluginCursorMsg = 1;
+        if (SendMessageW(g_PluginPanel, WM_SETCURSOR, (WPARAM)g_PluginPanel, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE)) && g_PluginCursor != NULL)
+        {
+            chosen = g_PluginCursor;
+        }
+        g_InPluginCursorMsg = 0;
+    }
+    else if (target == g_PluginTab)
+    {
+        if (g_HandCursor == NULL)
+        {
+            g_HandCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32649));
+        }
+        chosen = g_HandCursor;
+        g_PluginCursor = chosen;
+    }
+
+    EnsureOverlayCursor(chosen);
+}
+
 static void TrackArrow(void)
 {
     POINT point;
+    HWND target;
     if (g_GameWindow == NULL || !GetCursorPos(&point))
     {
         return;
     }
 
-    ScreenToClient(g_GameWindow, &point);
-    if (OverPanel(point.x, point.y, NULL, NULL))
+    if (g_RealScreenToClient != NULL)
     {
-        HoldArrow();
+        g_RealScreenToClient(g_GameWindow, &point);
+    }
+    else
+    {
+        ScreenToClient(g_GameWindow, &point);
+    }
+
+    target = ActiveOverlayTarget(point.x, point.y, NULL, NULL);
+    if (target != NULL)
+    {
+        EnsureOverlayCursor(g_PluginCursor);
     }
     else
     {
@@ -1249,10 +1455,20 @@ static void TrackArrow(void)
 static LRESULT CALLBACK GameOverlayProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     POINT point;
-    int localX;
-    int localY;
-    int over;
-    if (g_PluginPanel != NULL && g_PanelShown &&
+    int localX = 0;
+    int localY = 0;
+    HWND target;
+    if ((message == WM_CAPTURECHANGED || (message == WM_ACTIVATEAPP && !wparam)) && g_PluginCapture != NULL)
+    {
+        HWND lost = g_PluginCapture;
+        g_PluginCapture = NULL;
+        if (IsWindow(lost))
+        {
+            SendMessageW(lost, WM_CAPTURECHANGED, 0, 0);
+        }
+    }
+
+    if ((g_PluginPanel != NULL || g_PluginTab != NULL) &&
         (message == WM_MOUSEMOVE || message == WM_SETCURSOR ||
          message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK ||
          message == WM_LBUTTONUP || message == WM_MOUSEWHEEL))
@@ -1264,13 +1480,15 @@ static LRESULT CALLBACK GameOverlayProc(HWND window, UINT message, WPARAM wparam
                 return CallWindowProcW(g_GameProc, window, message, wparam, lparam);
             }
 
-            ScreenToClient(window, &point);
+            if (g_RealScreenToClient != NULL) g_RealScreenToClient(window, &point);
+            else ScreenToClient(window, &point);
         }
         else if (message == WM_MOUSEWHEEL)
         {
             point.x = (short)LOWORD(lparam);
             point.y = (short)HIWORD(lparam);
-            ScreenToClient(window, &point);
+            if (g_RealScreenToClient != NULL) g_RealScreenToClient(window, &point);
+            else ScreenToClient(window, &point);
         }
         else
         {
@@ -1278,16 +1496,27 @@ static LRESULT CALLBACK GameOverlayProc(HWND window, UINT message, WPARAM wparam
             point.y = (short)HIWORD(lparam);
         }
 
-        over = OverPanel(point.x, point.y, &localX, &localY);
-        if (over)
+        target = ActiveOverlayTarget(point.x, point.y, &localX, &localY);
+        if (target != NULL)
         {
-            HoldArrow();
-            if (message != WM_SETCURSOR)
+            if (message == WM_SETCURSOR)
             {
-                SendMessageW(g_PluginPanel, message, wparam, MAKELPARAM(localX, localY));
+                UpdateOverlayCursor(target);
+                return TRUE;
             }
 
-            return message == WM_SETCURSOR ? TRUE : 0;
+            if (message == WM_MOUSEWHEEL)
+            {
+                /* WM_MOUSEWHEEL passes screen coordinates; Hook_ScreenToClient translates them for the plugin. */
+                SendMessageW(target, message, wparam, lparam);
+            }
+            else
+            {
+                SendMessageW(target, message, wparam, MAKELPARAM((short)localX, (short)localY));
+            }
+
+            UpdateOverlayCursor(target);
+            return 0;
         }
 
         ReleaseArrow();
@@ -1346,11 +1575,14 @@ static HWND WINAPI Hook_CreateWindowExW(
     int x, int y, int width, int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
 {
     int pluginWindow = IsPluginWindowClass(className);
+    int wasChild = (style & WS_CHILD) != 0;
+    int reqX = x;
+    int reqY = y;
     HWND created;
     if (pluginWindow)
     {
         exStyle = (exStyle & ~0x8u) | 0x08000080u;
-        style &= ~WS_VISIBLE;
+        style = (style & ~(WS_VISIBLE | WS_CHILD)) | WS_POPUP;
         parent = NULL;
         x = -32000;
         y = -32000;
@@ -1360,15 +1592,30 @@ static HWND WINAPI Hook_CreateWindowExW(
         exStyle, className, windowName, style, x, y, width, height, parent, menu, instance, param);
     if (pluginWindow && created != NULL)
     {
+        POINT origin;
+        GameClientOrigin(&origin);
         if (lstrcmpiW(className, L"AethTankPanel") == 0)
         {
             g_PluginPanel = created;
+            g_PanelIsChild = wasChild;
             g_PanelShown = 1;
+            if (reqX > -16000 && reqY > -16000 && reqX != CW_USEDEFAULT && reqY != CW_USEDEFAULT)
+            {
+                g_PanelX = wasChild ? reqX : (reqX - origin.x);
+                g_PanelY = wasChild ? reqY : (reqY - origin.y);
+            }
             OverlayNote("captured plugin panel");
         }
         else
         {
             g_PluginTab = created;
+            g_TabIsChild = wasChild;
+            g_TabShown = 0;
+            if (reqX > -16000 && reqY > -16000 && reqX != CW_USEDEFAULT && reqY != CW_USEDEFAULT)
+            {
+                g_TabX = wasChild ? reqX : (reqX - origin.x);
+                g_TabY = wasChild ? reqY : (reqY - origin.y);
+            }
         }
     }
 
@@ -1379,13 +1626,24 @@ static BOOL WINAPI Hook_ShowWindow(HWND window, int command)
 {
     if (window == g_PluginPanel || window == g_PluginTab)
     {
+        int visible = command != SW_HIDE;
         if (window == g_PluginPanel)
         {
-            g_PanelShown = command != SW_HIDE;
+            g_PanelShown = visible;
+        }
+        else
+        {
+            g_TabShown = visible;
         }
 
-        if (command == SW_HIDE)
+        if (!visible)
         {
+            if (g_PluginCapture == window)
+            {
+                g_PluginCapture = NULL;
+                if (g_RealReleaseCapture != NULL) g_RealReleaseCapture();
+                else ReleaseCapture();
+            }
             return g_RealShowWindow(window, SW_HIDE);
         }
 
@@ -1402,12 +1660,117 @@ static BOOL WINAPI Hook_SetWindowPos(HWND window, HWND insertAfter, int x, int y
 {
     if (window == g_PluginPanel || window == g_PluginTab)
     {
+        if ((flags & SWP_NOMOVE) == 0 && x > -16000 && y > -16000)
+        {
+            POINT origin;
+            int isChild = window == g_PluginTab ? g_TabIsChild : g_PanelIsChild;
+            GameClientOrigin(&origin);
+            if (window == g_PluginPanel)
+            {
+                g_PanelX = isChild ? x : (x - origin.x);
+                g_PanelY = isChild ? y : (y - origin.y);
+            }
+            else
+            {
+                g_TabX = isChild ? x : (x - origin.x);
+                g_TabY = isChild ? y : (y - origin.y);
+            }
+        }
+
+        if ((flags & SWP_SHOWWINDOW) != 0)
+        {
+            if (window == g_PluginPanel) g_PanelShown = 1;
+            else g_TabShown = 1;
+        }
+        else if ((flags & SWP_HIDEWINDOW) != 0)
+        {
+            if (window == g_PluginPanel) g_PanelShown = 0;
+            else g_TabShown = 0;
+        }
+
         x = -32000;
         y = -32000;
         flags = (flags | SWP_NOACTIVATE | SWP_NOZORDER) & ~SWP_SHOWWINDOW;
     }
 
     return g_RealSetWindowPos(window, insertAfter, x, y, width, height, flags);
+}
+
+static BOOL WINAPI Hook_GetWindowRect(HWND window, LPRECT rect)
+{
+    if (rect != NULL && (window == g_PluginPanel || window == g_PluginTab))
+    {
+        int width = 0;
+        int height = 0;
+        POINT origin;
+        if (RealWindowSize(window, &width, &height))
+        {
+            int posX = window == g_PluginTab ? g_TabX : g_PanelX;
+            int posY = window == g_PluginTab ? g_TabY : g_PanelY;
+            GameClientOrigin(&origin);
+            rect->left = origin.x + posX;
+            rect->top = origin.y + posY;
+            rect->right = rect->left + width;
+            rect->bottom = rect->top + height;
+            return TRUE;
+        }
+    }
+
+    return g_RealGetWindowRect != NULL ? g_RealGetWindowRect(window, rect) : GetWindowRect(window, rect);
+}
+
+static BOOL WINAPI Hook_ScreenToClient(HWND window, LPPOINT point)
+{
+    if (point != NULL && (window == g_PluginPanel || window == g_PluginTab))
+    {
+        POINT origin;
+        int posX = window == g_PluginTab ? g_TabX : g_PanelX;
+        int posY = window == g_PluginTab ? g_TabY : g_PanelY;
+        GameClientOrigin(&origin);
+        point->x -= origin.x + posX;
+        point->y -= origin.y + posY;
+        return TRUE;
+    }
+
+    return g_RealScreenToClient != NULL ? g_RealScreenToClient(window, point) : ScreenToClient(window, point);
+}
+
+static HWND WINAPI Hook_SetCapture(HWND window)
+{
+    if (window != NULL && (window == g_PluginPanel || window == g_PluginTab))
+    {
+        HWND previous = g_PluginCapture;
+        g_PluginCapture = window;
+        if (g_GameWindow != NULL && IsWindow(g_GameWindow))
+        {
+            if (g_RealSetCapture != NULL) g_RealSetCapture(g_GameWindow);
+            else SetCapture(g_GameWindow);
+        }
+        return previous;
+    }
+
+    return g_RealSetCapture != NULL ? g_RealSetCapture(window) : SetCapture(window);
+}
+
+static BOOL WINAPI Hook_ReleaseCapture(void)
+{
+    if (g_PluginCapture != NULL)
+    {
+        g_PluginCapture = NULL;
+        return g_RealReleaseCapture != NULL ? g_RealReleaseCapture() : ReleaseCapture();
+    }
+
+    return g_RealReleaseCapture != NULL ? g_RealReleaseCapture() : ReleaseCapture();
+}
+
+static HCURSOR WINAPI Hook_SetCursor(HCURSOR cursor)
+{
+    if (g_InPluginCursorMsg)
+    {
+        g_PluginCursor = cursor;
+    }
+
+    return g_RealSetCursor != NULL ? g_RealSetCursor(cursor) : SetCursor(cursor);
 }
 
 static void PatchLoadedModule(HMODULE module)
@@ -1656,6 +2019,15 @@ __declspec(dllexport) DWORD WINAPI SlotIsolation_Install(LPVOID unused)
 {
     (void)unused;
     return InstallHooks() ? 1u : 0u;
+}
+
+__declspec(dllexport) void __cdecl SlotIsolation_AttachOverlayForTest(HWND gameWindow, HMODULE pluginModule)
+{
+    AttachGameWindow(gameWindow);
+    if (pluginModule != NULL)
+    {
+        PatchModuleWindowImports(pluginModule);
+    }
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
